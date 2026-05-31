@@ -17,6 +17,59 @@ export const supabase = hasSupabaseEnv
     })
   : null;
 
+const WEB_MODE_SETTINGS_TABLE = "web_mode_settings";
+const WEB_MODE_SETTINGS_ID = "global";
+
+export type WebModeSettingsPayload = {
+  mode: "web_mode";
+  baseUrl: string;
+  apiKey: string;
+  apiId: string;
+  apiHash: string;
+  phone: string;
+  adminKey: string;
+  rememberAdminInputs: boolean;
+  showAdminPanel: boolean;
+};
+
+type WebModeSettingsRow = {
+  id: string;
+  payload: unknown;
+};
+
+type SupabaseActionResult<T> = {
+  data: T | null;
+  error: string | null;
+};
+
+function toStringValue(value: unknown): string {
+  return typeof value === "string" ? value : "";
+}
+
+function toBoolValue(value: unknown, fallback: boolean): boolean {
+  return typeof value === "boolean" ? value : fallback;
+}
+
+function coerceWebModePayload(payload: unknown): WebModeSettingsPayload | null {
+  if (!payload || typeof payload !== "object") {
+    return null;
+  }
+
+  const raw = payload as Record<string, unknown>;
+
+  return {
+    mode: "web_mode",
+    baseUrl: toStringValue(raw.baseUrl),
+    apiKey: toStringValue(raw.apiKey),
+    apiId: toStringValue(raw.apiId),
+    apiHash: toStringValue(raw.apiHash),
+    phone: toStringValue(raw.phone),
+    adminKey: toStringValue(raw.adminKey),
+    rememberAdminInputs: toBoolValue(raw.rememberAdminInputs, true),
+    showAdminPanel: toBoolValue(raw.showAdminPanel, false),
+  };
+}
+
 export async function checkSupabaseHealth(): Promise<{ ok: boolean; message: string }> {
   if (!hasSupabaseEnv) {
     return { ok: false, message: "Missing Supabase env variables." };
@@ -37,4 +90,56 @@ export async function checkSupabaseHealth(): Promise<{ ok: boolean; message: str
   } catch {
     return { ok: false, message: "Failed to reach Supabase endpoint." };
   }
+}
+
+export async function loadWebModeSettingsFromSupabase(): Promise<SupabaseActionResult<WebModeSettingsPayload>> {
+  if (!supabase) {
+    return { data: null, error: "Supabase env missing." };
+  }
+
+  const { data, error } = await supabase
+    .from(WEB_MODE_SETTINGS_TABLE)
+    .select("id, payload")
+    .eq("id", WEB_MODE_SETTINGS_ID)
+    .maybeSingle<WebModeSettingsRow>();
+
+  if (error) {
+    return { data: null, error: error.message };
+  }
+
+  if (!data) {
+    return { data: null, error: null };
+  }
+
+  const payload = coerceWebModePayload(data.payload);
+  if (!payload) {
+    return { data: null, error: "Invalid Supabase settings payload." };
+  }
+
+  return { data: payload, error: null };
+}
+
+export async function saveWebModeSettingsToSupabase(
+  payload: WebModeSettingsPayload,
+): Promise<SupabaseActionResult<"saved">> {
+  if (!supabase) {
+    return { data: null, error: "Supabase env missing." };
+  }
+
+  const { error } = await supabase.from(WEB_MODE_SETTINGS_TABLE).upsert(
+    {
+      id: WEB_MODE_SETTINGS_ID,
+      payload,
+      updated_at: new Date().toISOString(),
+    },
+    {
+      onConflict: "id",
+    },
+  );
+
+  if (error) {
+    return { data: null, error: error.message };
+  }
+
+  return { data: "saved", error: null };
 }

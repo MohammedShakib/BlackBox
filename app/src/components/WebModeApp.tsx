@@ -1,6 +1,11 @@
-import { FormEvent, useEffect, useMemo, useState } from "react";
+import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { Eye, EyeOff, Shield, Lock, Link2, Search, Download } from "lucide-react";
 import { formatBytes } from "../utils";
+import {
+  loadWebModeSettingsFromSupabase,
+  saveWebModeSettingsToSupabase,
+  type WebModeSettingsPayload,
+} from "../lib/supabase";
 
 type HealthResponse = {
   status: string;
@@ -152,42 +157,101 @@ export function WebModeApp() {
   const [downloadingId, setDownloadingId] = useState<number | null>(null);
 
   const [apiConfig, setApiConfig] = useState<ApiConfigResponse | null>(null);
+  const [supabaseSyncInfo, setSupabaseSyncInfo] = useState("Syncing settings from Supabase...");
+  const [supabaseSyncError, setSupabaseSyncError] = useState("");
+  const [remoteHydrated, setRemoteHydrated] = useState(false);
+  const hasLoadedRemoteRef = useRef(false);
+  const saveDebounceRef = useRef<number | null>(null);
 
   const totalPages = useMemo(() => Math.max(1, Math.ceil(total / limit)), [total, limit]);
   const normalizedBaseUrl = useMemo(() => normalizeBaseUrl(baseUrlInput), [baseUrlInput]);
   const parsedFolderId = useMemo(() => parseFolderId(folderIdInput), [folderIdInput]);
+  const currentSettingsPayload = useMemo<WebModeSettingsPayload>(
+    () => ({
+      mode: "web_mode",
+      baseUrl: normalizeBaseUrl(baseUrlInput),
+      apiKey: apiKeyInput.trim(),
+      apiId: apiIdInput.trim(),
+      apiHash: apiHashInput.trim(),
+      phone: phoneInput.trim(),
+      adminKey: adminKeyInput.trim(),
+      rememberAdminInputs,
+      showAdminPanel,
+    }),
+    [
+      adminKeyInput,
+      apiHashInput,
+      apiIdInput,
+      apiKeyInput,
+      baseUrlInput,
+      phoneInput,
+      rememberAdminInputs,
+      showAdminPanel,
+    ],
+  );
 
   useEffect(() => {
     if (typeof window === "undefined") return;
-    const savedBaseUrl = localStorage.getItem(BASE_URL_KEY);
-    const savedApiKey = localStorage.getItem(API_KEY_KEY);
-    const savedRememberFlag = localStorage.getItem(ADMIN_REMEMBER_KEY);
-    if (savedBaseUrl) setBaseUrlInput(savedBaseUrl);
-    if (savedApiKey) setApiKeyInput(savedApiKey);
 
-    if (savedRememberFlag !== null) {
-      setRememberAdminInputs(savedRememberFlag === "1");
-    }
+    const hydrate = async () => {
+      const savedBaseUrl = localStorage.getItem(BASE_URL_KEY);
+      const savedApiKey = localStorage.getItem(API_KEY_KEY);
+      const savedRememberFlag = localStorage.getItem(ADMIN_REMEMBER_KEY);
+      if (savedBaseUrl) setBaseUrlInput(savedBaseUrl);
+      if (savedApiKey) setApiKeyInput(savedApiKey);
 
-    const savedAdmin = localStorage.getItem(ADMIN_FORM_KEY);
-    if (!savedAdmin) return;
-    try {
-      const parsed = JSON.parse(savedAdmin) as {
-        apiId?: string;
-        apiHash?: string;
-        phone?: string;
-        adminKey?: string;
-      };
-      if (parsed.apiId) setApiIdInput(parsed.apiId);
-      if (parsed.apiHash) setApiHashInput(parsed.apiHash);
-      if (parsed.phone) setPhoneInput(parsed.phone);
-      if (parsed.adminKey) setAdminKeyInput(parsed.adminKey);
-      if (parsed.apiId || parsed.apiHash || parsed.phone || parsed.adminKey) {
-        setShowAdminPanel(true);
+      if (savedRememberFlag !== null) {
+        setRememberAdminInputs(savedRememberFlag === "1");
       }
-    } catch {
-      // ignore invalid storage payload
-    }
+
+      const savedAdmin = localStorage.getItem(ADMIN_FORM_KEY);
+      if (savedAdmin) {
+        try {
+          const parsed = JSON.parse(savedAdmin) as {
+            apiId?: string;
+            apiHash?: string;
+            phone?: string;
+            adminKey?: string;
+          };
+          if (parsed.apiId) setApiIdInput(parsed.apiId);
+          if (parsed.apiHash) setApiHashInput(parsed.apiHash);
+          if (parsed.phone) setPhoneInput(parsed.phone);
+          if (parsed.adminKey) setAdminKeyInput(parsed.adminKey);
+          if (parsed.apiId || parsed.apiHash || parsed.phone || parsed.adminKey) {
+            setShowAdminPanel(true);
+          }
+        } catch {
+          // ignore invalid storage payload
+        }
+      }
+
+      const { data, error } = await loadWebModeSettingsFromSupabase();
+      hasLoadedRemoteRef.current = true;
+      setRemoteHydrated(true);
+
+      if (error) {
+        setSupabaseSyncError(`Supabase sync error: ${error}`);
+        setSupabaseSyncInfo("");
+        return;
+      }
+
+      if (!data) {
+        setSupabaseSyncInfo("Supabase connected. No saved remote settings yet.");
+        return;
+      }
+
+      setBaseUrlInput(data.baseUrl || "https://blackbox-api-w1iq.onrender.com");
+      setApiKeyInput(data.apiKey);
+      setApiIdInput(data.apiId);
+      setApiHashInput(data.apiHash);
+      setPhoneInput(data.phone);
+      setAdminKeyInput(data.adminKey);
+      setRememberAdminInputs(data.rememberAdminInputs);
+      setShowAdminPanel(data.showAdminPanel);
+      setSupabaseSyncInfo("Supabase connected. Remote settings loaded.");
+    };
+
+    hydrate();
   }, []);
 
   useEffect(() => {
@@ -207,6 +271,34 @@ export function WebModeApp() {
       localStorage.removeItem(ADMIN_FORM_KEY);
     }
   }, [rememberAdminInputs, apiIdInput, apiHashInput, phoneInput, adminKeyInput]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    if (!remoteHydrated || !hasLoadedRemoteRef.current) return;
+
+    if (saveDebounceRef.current) {
+      window.clearTimeout(saveDebounceRef.current);
+    }
+
+    setSupabaseSyncError("");
+    setSupabaseSyncInfo("Syncing settings to Supabase...");
+
+    saveDebounceRef.current = window.setTimeout(async () => {
+      const { error } = await saveWebModeSettingsToSupabase(currentSettingsPayload);
+      if (error) {
+        setSupabaseSyncError(`Supabase sync error: ${error}`);
+        setSupabaseSyncInfo("");
+        return;
+      }
+      setSupabaseSyncInfo("Supabase sync active. Settings are saved remotely.");
+    }, 700);
+
+    return () => {
+      if (saveDebounceRef.current) {
+        window.clearTimeout(saveDebounceRef.current);
+      }
+    };
+  }, [currentSettingsPayload, remoteHydrated]);
 
   const fetchConfig = async (): Promise<ApiConfigResponse> => {
     const res = await fetch(`${normalizedBaseUrl}/api/v1/config`);
@@ -565,6 +657,8 @@ export function WebModeApp() {
 
           {connectionInfo && <p className="mt-3 text-sm text-emerald-400">{connectionInfo}</p>}
           {connectionError && <p className="mt-3 text-sm text-red-400">{connectionError}</p>}
+          {supabaseSyncInfo && <p className="mt-2 text-xs text-cyan-300">{supabaseSyncInfo}</p>}
+          {supabaseSyncError && <p className="mt-2 text-xs text-red-300">{supabaseSyncError}</p>}
         </section>
 
         <section className="rounded-3xl border border-blackbox-border bg-blackbox-hover p-6">
