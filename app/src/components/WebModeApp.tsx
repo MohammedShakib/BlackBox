@@ -42,6 +42,8 @@ type AuthStatusResponse = {
 
 const BASE_URL_KEY = "blackbox_web_api_base_url";
 const API_KEY_KEY = "blackbox_web_api_key";
+const ADMIN_REMEMBER_KEY = "blackbox_web_admin_remember";
+const ADMIN_FORM_KEY = "blackbox_web_admin_form";
 const FALLBACK_CONFIG: ApiConfigResponse = {
   locked_mode: false,
   locked_folder_id: null,
@@ -127,6 +129,7 @@ export function WebModeApp() {
   const [showPassword, setShowPassword] = useState(false);
   const [showAdminKey, setShowAdminKey] = useState(false);
   const [showAdminPanel, setShowAdminPanel] = useState(false);
+  const [rememberAdminInputs, setRememberAdminInputs] = useState(true);
 
   const [connected, setConnected] = useState(false);
   const [connecting, setConnecting] = useState(false);
@@ -158,9 +161,52 @@ export function WebModeApp() {
     if (typeof window === "undefined") return;
     const savedBaseUrl = localStorage.getItem(BASE_URL_KEY);
     const savedApiKey = localStorage.getItem(API_KEY_KEY);
+    const savedRememberFlag = localStorage.getItem(ADMIN_REMEMBER_KEY);
     if (savedBaseUrl) setBaseUrlInput(savedBaseUrl);
     if (savedApiKey) setApiKeyInput(savedApiKey);
+
+    if (savedRememberFlag !== null) {
+      setRememberAdminInputs(savedRememberFlag === "1");
+    }
+
+    const savedAdmin = localStorage.getItem(ADMIN_FORM_KEY);
+    if (!savedAdmin) return;
+    try {
+      const parsed = JSON.parse(savedAdmin) as {
+        apiId?: string;
+        apiHash?: string;
+        phone?: string;
+        adminKey?: string;
+      };
+      if (parsed.apiId) setApiIdInput(parsed.apiId);
+      if (parsed.apiHash) setApiHashInput(parsed.apiHash);
+      if (parsed.phone) setPhoneInput(parsed.phone);
+      if (parsed.adminKey) setAdminKeyInput(parsed.adminKey);
+      if (parsed.apiId || parsed.apiHash || parsed.phone || parsed.adminKey) {
+        setShowAdminPanel(true);
+      }
+    } catch {
+      // ignore invalid storage payload
+    }
   }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    localStorage.setItem(ADMIN_REMEMBER_KEY, rememberAdminInputs ? "1" : "0");
+    if (rememberAdminInputs) {
+      localStorage.setItem(
+        ADMIN_FORM_KEY,
+        JSON.stringify({
+          apiId: apiIdInput.trim(),
+          apiHash: apiHashInput.trim(),
+          phone: phoneInput.trim(),
+          adminKey: adminKeyInput.trim(),
+        })
+      );
+    } else {
+      localStorage.removeItem(ADMIN_FORM_KEY);
+    }
+  }, [rememberAdminInputs, apiIdInput, apiHashInput, phoneInput, adminKeyInput]);
 
   const fetchConfig = async (): Promise<ApiConfigResponse> => {
     const res = await fetch(`${normalizedBaseUrl}/api/v1/config`);
@@ -590,6 +636,19 @@ export function WebModeApp() {
                   onToggle={() => setShowAdminKey((v) => !v)}
                 />
               </div>
+
+              <label className="mt-3 inline-flex items-center gap-2 text-sm text-blackbox-subtext">
+                <input
+                  type="checkbox"
+                  checked={rememberAdminInputs}
+                  onChange={(e) => setRememberAdminInputs(e.target.checked)}
+                  className="h-4 w-4 rounded border-blackbox-border bg-blackbox-bg"
+                />
+                Remember admin inputs on this browser (API ID, API hash, phone, admin key).
+              </label>
+              <p className="mt-1 text-xs text-blackbox-subtext/80">
+                Verification code and 2FA password are never saved.
+              </p>
 
               <div className="flex gap-2 flex-wrap mt-3">
                 <button
