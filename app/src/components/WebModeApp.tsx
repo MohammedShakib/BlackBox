@@ -22,6 +22,17 @@ type FilesResponse = {
   total: number;
 };
 
+type AuthResult = {
+  success: boolean;
+  next_step?: string;
+  error?: string;
+};
+
+type AuthStatusResponse = {
+  connected: boolean;
+  authorized: boolean;
+};
+
 const BASE_URL_KEY = "blackbox_web_api_base_url";
 const API_KEY_KEY = "blackbox_web_api_key";
 
@@ -49,10 +60,18 @@ function extractFileName(contentDisposition: string | null, fallback: string): s
 export function WebModeApp() {
   const [baseUrlInput, setBaseUrlInput] = useState("http://127.0.0.1:8550");
   const [apiKeyInput, setApiKeyInput] = useState("");
+  const [apiIdInput, setApiIdInput] = useState("");
+  const [apiHashInput, setApiHashInput] = useState("");
+  const [phoneInput, setPhoneInput] = useState("");
+  const [codeInput, setCodeInput] = useState("");
+  const [passwordInput, setPasswordInput] = useState("");
   const [connected, setConnected] = useState(false);
   const [connecting, setConnecting] = useState(false);
   const [connectionInfo, setConnectionInfo] = useState<string>("");
   const [connectionError, setConnectionError] = useState<string>("");
+  const [authLoading, setAuthLoading] = useState(false);
+  const [authInfo, setAuthInfo] = useState<string>("");
+  const [authError, setAuthError] = useState<string>("");
 
   const [search, setSearch] = useState("");
   const [folderIdInput, setFolderIdInput] = useState("");
@@ -76,6 +95,116 @@ export function WebModeApp() {
     if (savedBaseUrl) setBaseUrlInput(savedBaseUrl);
     if (savedApiKey) setApiKeyInput(savedApiKey);
   }, []);
+
+  const postAuth = async (path: string, payload: Record<string, unknown>) => {
+    const res = await fetch(`${normalizedBaseUrl}${path}`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(payload),
+    });
+
+    const data: AuthResult = await res.json();
+    if (!res.ok || !data.success) {
+      throw new Error(data.error || `Request failed (${res.status})`);
+    }
+    return data;
+  };
+
+  const requestCode = async () => {
+    setAuthError("");
+    setAuthInfo("");
+    if (!apiIdInput.trim() || !apiHashInput.trim() || !phoneInput.trim()) {
+      setAuthError("API ID, API hash, and phone are required for login.");
+      return;
+    }
+
+    const parsedApiId = Number(apiIdInput.trim());
+    if (!Number.isInteger(parsedApiId)) {
+      setAuthError("API ID must be an integer.");
+      return;
+    }
+
+    setAuthLoading(true);
+    try {
+      const data = await postAuth("/api/v1/auth/request_code", {
+        api_id: parsedApiId,
+        api_hash: apiHashInput.trim(),
+        phone: phoneInput.trim(),
+      });
+      setAuthInfo(`Code requested successfully. Next step: ${data.next_step || "code"}.`);
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : "Failed to request login code.";
+      setAuthError(message);
+    } finally {
+      setAuthLoading(false);
+    }
+  };
+
+  const signInWithCode = async () => {
+    setAuthError("");
+    setAuthInfo("");
+    if (!codeInput.trim()) {
+      setAuthError("Verification code is required.");
+      return;
+    }
+
+    setAuthLoading(true);
+    try {
+      const data = await postAuth("/api/v1/auth/sign_in", {
+        code: codeInput.trim(),
+      });
+      if (data.next_step === "password") {
+        setAuthInfo("Password required. Enter your Telegram 2FA password.");
+      } else {
+        setAuthInfo("Login successful.");
+      }
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : "Failed to sign in.";
+      setAuthError(message);
+    } finally {
+      setAuthLoading(false);
+    }
+  };
+
+  const submitPassword = async () => {
+    setAuthError("");
+    setAuthInfo("");
+    if (!passwordInput.trim()) {
+      setAuthError("Password is required.");
+      return;
+    }
+
+    setAuthLoading(true);
+    try {
+      await postAuth("/api/v1/auth/check_password", {
+        password: passwordInput,
+      });
+      setAuthInfo("Password accepted. Login successful.");
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : "Failed to verify password.";
+      setAuthError(message);
+    } finally {
+      setAuthLoading(false);
+    }
+  };
+
+  const checkAuthStatus = async () => {
+    setAuthError("");
+    setAuthInfo("");
+    try {
+      const res = await fetch(`${normalizedBaseUrl}/api/v1/auth/status`);
+      if (!res.ok) {
+        throw new Error(`Status check failed (${res.status}).`);
+      }
+      const data: AuthStatusResponse = await res.json();
+      setAuthInfo(`Auth status: connected=${data.connected}, authorized=${data.authorized}`);
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : "Failed to check auth status.";
+      setAuthError(message);
+    }
+  };
 
   const connect = async (e: FormEvent) => {
     e.preventDefault();
@@ -215,6 +344,88 @@ export function WebModeApp() {
   return (
     <main className="min-h-screen bg-blackbox-bg text-blackbox-text p-6 md:p-10">
       <div className="max-w-6xl mx-auto space-y-6">
+        <section className="rounded-2xl border border-blackbox-border bg-blackbox-hover p-6">
+          <h2 className="text-xl font-bold mb-2">Telegram Login (Server Side)</h2>
+          <p className="text-sm text-blackbox-subtext mb-4">
+            First authenticate your Telegram session on the backend, then connect with API key below.
+          </p>
+          <div className="grid gap-3 md:grid-cols-3">
+            <input
+              type="text"
+              value={apiIdInput}
+              onChange={(e) => setApiIdInput(e.target.value)}
+              placeholder="Telegram API ID"
+              className="px-3 py-2 rounded-lg bg-blackbox-bg border border-blackbox-border focus:outline-none focus:ring-2 focus:ring-blackbox-primary"
+            />
+            <input
+              type="text"
+              value={apiHashInput}
+              onChange={(e) => setApiHashInput(e.target.value)}
+              placeholder="Telegram API Hash"
+              className="px-3 py-2 rounded-lg bg-blackbox-bg border border-blackbox-border focus:outline-none focus:ring-2 focus:ring-blackbox-primary"
+            />
+            <input
+              type="text"
+              value={phoneInput}
+              onChange={(e) => setPhoneInput(e.target.value)}
+              placeholder="Phone (+880...)"
+              className="px-3 py-2 rounded-lg bg-blackbox-bg border border-blackbox-border focus:outline-none focus:ring-2 focus:ring-blackbox-primary"
+            />
+          </div>
+          <div className="grid gap-3 md:grid-cols-3 mt-3">
+            <input
+              type="text"
+              value={codeInput}
+              onChange={(e) => setCodeInput(e.target.value)}
+              placeholder="Verification code"
+              className="px-3 py-2 rounded-lg bg-blackbox-bg border border-blackbox-border focus:outline-none focus:ring-2 focus:ring-blackbox-primary"
+            />
+            <input
+              type="password"
+              value={passwordInput}
+              onChange={(e) => setPasswordInput(e.target.value)}
+              placeholder="2FA password (if needed)"
+              className="px-3 py-2 rounded-lg bg-blackbox-bg border border-blackbox-border focus:outline-none focus:ring-2 focus:ring-blackbox-primary"
+            />
+            <div className="flex gap-2 flex-wrap">
+              <button
+                type="button"
+                onClick={requestCode}
+                disabled={authLoading}
+                className="px-3 py-2 rounded-lg bg-blackbox-primary text-blackbox-county-green font-semibold disabled:opacity-60"
+              >
+                Request Code
+              </button>
+              <button
+                type="button"
+                onClick={signInWithCode}
+                disabled={authLoading}
+                className="px-3 py-2 rounded-lg border border-blackbox-border bg-blackbox-bg disabled:opacity-60"
+              >
+                Sign In
+              </button>
+              <button
+                type="button"
+                onClick={submitPassword}
+                disabled={authLoading}
+                className="px-3 py-2 rounded-lg border border-blackbox-border bg-blackbox-bg disabled:opacity-60"
+              >
+                Submit Password
+              </button>
+              <button
+                type="button"
+                onClick={checkAuthStatus}
+                disabled={authLoading}
+                className="px-3 py-2 rounded-lg border border-blackbox-border bg-blackbox-bg disabled:opacity-60"
+              >
+                Check Status
+              </button>
+            </div>
+          </div>
+          {authInfo && <p className="mt-3 text-sm text-emerald-400">{authInfo}</p>}
+          {authError && <p className="mt-3 text-sm text-red-400">{authError}</p>}
+        </section>
+
         <section className="rounded-2xl border border-blackbox-border bg-blackbox-hover p-6">
           <h1 className="text-2xl font-bold mb-2">BlackBox Web Mode</h1>
           <p className="text-sm text-blackbox-subtext mb-4">

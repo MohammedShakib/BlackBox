@@ -1,0 +1,14 @@
+services:
+  - type: web
+    name: blackbox-api
+    runtime: rust
+    rootDir: backend
+    buildCommand: cargo build --release
+    startCommand: ./target/release/blackbox-backend
+    healthCheckPath: /api/v1/health
+    autoDeploy: true
+    envVars:
+      - key: API_KEY
+        generateValue: true
+      - key: SESSION_DIR
+        value: /opt/render/project/src/backend/data
