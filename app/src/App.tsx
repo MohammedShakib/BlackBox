@@ -6,6 +6,7 @@ import { AuthWizard } from "./components/AuthWizard";
 import { Dashboard } from "./components/Dashboard";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import { UpdateBanner } from "./components/UpdateBanner";
+import { WebModeApp } from "./components/WebModeApp";
 import { useUpdateCheck } from "./hooks/useUpdateCheck";
 import "./App.css";
 
@@ -20,7 +21,7 @@ const queryClient = new QueryClient();
 
 type AuthStatus = "loading" | "authenticated" | "unauthenticated";
 
-function AppContent() {
+function DesktopAppContent() {
   const [authStatus, setAuthStatus] = useState<AuthStatus>("loading");
   const { theme } = useTheme();
   const { available, version, downloading, progress, downloadAndInstall, dismissUpdate } = useUpdateCheck();
@@ -110,8 +111,29 @@ function AppContent() {
   );
 }
 
+function WebAppContent() {
+  const { theme } = useTheme();
+  return (
+    <>
+      <Toaster theme={theme} position="bottom-center" />
+      <WebModeApp />
+    </>
+  );
+}
 
 function App() {
+  const isBrowserRuntime = typeof window !== "undefined" && !("__TAURI_INTERNALS__" in window);
+
+  if (isBrowserRuntime) {
+    return (
+      <ErrorBoundary>
+        <ThemeProvider>
+          <WebAppContent />
+        </ThemeProvider>
+      </ErrorBoundary>
+    );
+  }
+
   return (
     <ErrorBoundary>
       <ThemeProvider>
@@ -120,7 +142,7 @@ function App() {
             <CacheSessionProvider>
               <SettingsProvider>
                 <DropZoneProvider>
-                  <AppContent />
+                  <DesktopAppContent />
                 </DropZoneProvider>
               </SettingsProvider>
             </CacheSessionProvider>
