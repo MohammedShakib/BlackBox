@@ -2,18 +2,7 @@ import { FormEvent, useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { load } from "@tauri-apps/plugin-store";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import {
-  Clapperboard,
-  Download,
-  Film,
-  Flame,
-  Ghost,
-  Home,
-  Orbit,
-  Search,
-  ShieldCheck,
-  Tv,
-} from "lucide-react";
+import { Lock } from "lucide-react";
 import { AuthWizard } from "./components/AuthWizard";
 import { Dashboard } from "./components/Dashboard";
 import { ErrorBoundary } from "./components/ErrorBoundary";
@@ -33,24 +22,6 @@ import { DropZoneProvider } from "./contexts/DropZoneContext";
 const queryClient = new QueryClient();
 const WEB_ADMIN_SESSION_KEY = "blackbox_web_admin_session";
 
-type LandingReleaseItem = {
-  id: number;
-  title: string;
-  meta: string;
-  age: string;
-  tag: string;
-};
-
-const landingReleases: LandingReleaseItem[] = [
-  { id: 1, title: "FROM (2026) Dual Audio [Hindi & English]", meta: "Prime Original Web Series", age: "1 hour ago", tag: "WEB-DL" },
-  { id: 2, title: "Kattalan (2026) Hindi Dubbed HDTC V2", meta: "720p | 1080p | HEVC", age: "2 days ago", tag: "HDTC" },
-  { id: 3, title: "Kara (2026) Dual Audio [Hindi & Tamil]", meta: "WEB-DL 480p | 720p", age: "4 days ago", tag: "WEB-DL" },
-  { id: 4, title: "Spider-Noir (2026) Hindi Dubbed", meta: "Amazon Prime Release", age: "4 days ago", tag: "WEB-DL" },
-  { id: 5, title: "Bonolota Express (2026) Bengali", meta: "720p | 1080p", age: "1 week ago", tag: "WEB-DL" },
-  { id: 6, title: "Bachelor Point (Season 5)", meta: "Bangla Original Web", age: "1 week ago", tag: "WEB-DL" },
-  { id: 7, title: "The Prince (2026) Dubbed", meta: "Dual Audio 1080p", age: "9 days ago", tag: "TRENDING" },
-  { id: 8, title: "Rakkhosh (2026) Bengali", meta: "Full HD 720p", age: "10 days ago", tag: "WEB-DL" },
-];
 
 type AuthStatus = "loading" | "authenticated" | "unauthenticated";
 
@@ -217,7 +188,7 @@ function WebAppContent() {
           <button
             type="button"
             onClick={logoutAdmin}
-            className="px-3 py-2 rounded-lg border border-blackbox-border bg-blackbox-bg/90 text-sm font-medium"
+            className="px-3 py-1.5 rounded-lg border border-blackbox-border bg-blackbox-bg/90 text-xs text-blackbox-subtext hover:text-blackbox-text transition-colors backdrop-blur-sm"
           >
             Admin Logout
           </button>
@@ -230,173 +201,153 @@ function WebAppContent() {
   return (
     <>
       <Toaster theme={theme} position="bottom-center" />
-      <main className="min-h-screen bg-[#090913] text-blackbox-text relative overflow-hidden pb-12">
-        <div className="absolute inset-0 pointer-events-none bg-[radial-gradient(circle_at_18%_8%,rgba(37,130,96,0.22),transparent_42%),radial-gradient(circle_at_84%_6%,rgba(29,252,159,0.12),transparent_30%)]" />
 
-        <div className="relative z-10">
-          <header className="border-b border-white/10 bg-black/60 backdrop-blur">
-            <div className="mx-auto w-full max-w-[1380px] px-4 py-5 md:px-8">
-              <div className="flex items-center justify-between gap-4">
-                <div className="flex items-center gap-2 md:gap-7">
-                  <div className="text-xl font-extrabold tracking-wide text-[#b8ff3e]">
-                    CINEFREAK<span className="text-white text-base">.top</span>
-                  </div>
-                  <nav className="hidden lg:flex items-center gap-6 text-[17px] font-semibold">
-                    <a href="#" className="inline-flex items-center gap-2 text-white hover:text-blackbox-primary">
-                      <Home size={16} />
-                      Home
-                    </a>
-                    <a href="#" className="inline-flex items-center gap-2 text-white hover:text-blackbox-primary">
-                      <Tv size={16} />
-                      WEB-Series
-                    </a>
-                    <a href="#" className="inline-flex items-center gap-2 text-white hover:text-blackbox-primary">
-                      <Film size={16} />
-                      Movies
-                    </a>
-                    <a href="#" className="inline-flex items-center gap-2 text-white hover:text-blackbox-primary">
-                      <Ghost size={16} />
-                      Horror
-                    </a>
-                    <a href="#" className="inline-flex items-center gap-2 text-white hover:text-blackbox-primary">
-                      <Orbit size={16} />
-                      MCU
-                    </a>
-                  </nav>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setShowAdminLogin(true);
-                    setAdminLoginError("");
-                  }}
-                  className="rounded-full border border-white/20 bg-white/5 px-4 py-2 text-sm font-semibold hover:border-blackbox-primary/40"
-                >
-                  Admin Control
-                </button>
-              </div>
-            </div>
-          </header>
+      <main className="min-h-screen bg-blackbox-bg text-blackbox-text flex flex-col relative overflow-hidden">
 
-          <div className="mx-auto w-full max-w-[1380px] px-4 pt-5 md:px-8">
-            <div className="flex items-center justify-between gap-4 border-b border-white/10 pb-5">
-              <div className="flex flex-wrap items-center gap-3">
-                <span className="inline-flex items-center gap-2 rounded-full border border-red-400/35 bg-red-500/15 px-4 py-2 text-sm font-semibold text-red-200">
-                  <ShieldCheck size={15} />
-                  18+ Movies
-                </span>
-                <span className="inline-flex items-center rounded-full border border-blue-400/35 bg-blue-500/15 px-4 py-2 text-sm font-semibold text-blue-100">
-                  Join Telegram
-                </span>
-                <span className="inline-flex items-center gap-2 rounded-full border border-yellow-300/30 bg-yellow-500/15 px-4 py-2 text-sm font-semibold text-yellow-100">
-                  <Download size={15} />
-                  How to Download
-                </span>
-              </div>
-              <div className="hidden md:inline-flex items-center gap-2 rounded-full border border-white/20 bg-white/5 px-3 py-2 text-sm text-blackbox-subtext">
-                <Search size={16} />
-                Search
-              </div>
-            </div>
+        {/* Background decoration */}
+        <div className="absolute inset-0 pointer-events-none select-none" aria-hidden>
+          <div
+            className="absolute inset-0 opacity-[0.25]"
+            style={{
+              backgroundImage: "radial-gradient(circle, rgba(29,252,159,0.18) 1px, transparent 1px)",
+              backgroundSize: "48px 48px",
+            }}
+          />
+          <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[700px] h-[500px] rounded-full bg-blackbox-primary/4 blur-3xl" />
+          <div className="absolute -top-40 -right-40 w-[500px] h-[500px] rounded-full bg-blackbox-secondary/8 blur-3xl" />
+          <div className="absolute -bottom-40 -left-40 w-[500px] h-[500px] rounded-full bg-blackbox-primary/4 blur-3xl" />
+        </div>
 
-            <section className="pt-10">
-              <div className="mb-8 flex items-center justify-between gap-4">
-                <h1 className="inline-flex items-center gap-3 text-3xl font-bold">
-                  <Flame size={24} />
-                  Latest Releases
-                </h1>
-                <div className="text-xs text-blackbox-subtext">
-                  {supabaseStatus === "connected"
-                    ? `Backend: Connected - ${supabaseMessage}`
-                    : `Backend: ${supabaseMessage}`}
-                </div>
-              </div>
+        {/* Hero */}
+        <div className="flex-1 flex flex-col items-center justify-center px-6 py-20 relative z-10 text-center">
 
-              <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-6">
-                {landingReleases.map((item, index) => (
-                  <article
-                    key={item.id}
-                    className="overflow-hidden rounded-xl border border-[#3b2f0f] bg-[#0f0f18] shadow-[0_0_0_1px_rgba(255,184,0,0.08)]"
-                  >
-                    <div className="relative aspect-[3/4] border-b border-white/10">
-                      <div className="absolute inset-0 bg-gradient-to-br from-[#2b5b47] via-[#1e2635] to-[#3d251e]" />
-                      <div className="absolute inset-0 opacity-35 bg-[radial-gradient(circle_at_30%_20%,rgba(255,255,255,0.35),transparent_45%),linear-gradient(145deg,transparent,rgba(0,0,0,0.55))]" />
-                      <span className="absolute left-2 top-2 inline-flex items-center rounded-sm bg-black/60 px-2 py-0.5 text-[10px] font-extrabold tracking-[0.18em] text-white">
-                        TRENDING
-                      </span>
-                      <span className="absolute right-2 top-2 rounded bg-black/65 px-1.5 py-0.5 text-[10px] font-semibold text-white">
-                        {item.tag}
-                      </span>
-                      <div className="absolute bottom-3 left-3 right-3 text-sm font-bold text-white">
-                        #{index + 1} SAMPLE
-                      </div>
-                    </div>
-                    <div className="space-y-2 p-3">
-                      <h2 className="max-h-[60px] overflow-hidden text-[15px] font-extrabold leading-5">{item.title}</h2>
-                      <p className="max-h-8 overflow-hidden text-xs text-blackbox-subtext">{item.meta}</p>
-                      <p className="text-xs text-white/70">{item.age}</p>
-                    </div>
-                  </article>
-                ))}
-              </div>
-            </section>
+          {/* Icon */}
+          <div className="mb-8 w-16 h-16 rounded-3xl bg-blackbox-primary/10 border border-blackbox-primary/20 flex items-center justify-center shadow-xl shadow-blackbox-primary/10">
+            <svg
+              width="28"
+              height="28"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.5"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              className="text-blackbox-primary"
+            >
+              <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z" />
+              <polyline points="3.27 6.96 12 12.01 20.73 6.96" />
+              <line x1="12" y1="22.08" x2="12" y2="12" />
+            </svg>
           </div>
 
-          <div className="mx-auto w-full max-w-[1380px] px-4 pt-10 md:px-8">
-            <div className="flex justify-end">
-              <button
-                type="button"
-                onClick={() => {
-                  setShowAdminLogin(true);
-                  setAdminLoginError("");
-                }}
-                className="inline-flex items-center gap-2 rounded-lg border border-blackbox-border bg-blackbox-bg/60 px-4 py-2 text-sm font-semibold"
+          {/* Wordmark */}
+          <h1 className="text-[clamp(3.5rem,10vw,7rem)] font-black tracking-tighter leading-none">
+            BlackBox
+          </h1>
+
+          {/* Tagline */}
+          <p className="mt-5 text-base md:text-lg text-blackbox-subtext/60 max-w-sm leading-relaxed">
+            Private file storage, powered by Telegram infrastructure.
+          </p>
+
+          {/* Feature pills */}
+          <div className="mt-10 flex flex-wrap gap-3 justify-center">
+            {(
+              [
+                ["🔐", "End-to-end private"],
+                ["⚡", "Telegram-native"],
+                ["🌐", "Web accessible"],
+              ] as [string, string][]
+            ).map(([icon, label]) => (
+              <span
+                key={label}
+                className="px-4 py-2 rounded-full border border-blackbox-border bg-blackbox-hover text-sm text-blackbox-subtext/80 flex items-center gap-2"
               >
-                <Clapperboard size={15} />
-                Open Admin Login
-              </button>
-            </div>
+                <span>{icon}</span>
+                {label}
+              </span>
+            ))}
+          </div>
+
+          {/* System status */}
+          <div className="mt-12 inline-flex items-center gap-2 text-xs text-blackbox-subtext/40 bg-blackbox-hover/60 border border-blackbox-border/40 rounded-full px-3 py-1.5">
+            <span
+              className={`inline-block w-1.5 h-1.5 rounded-full flex-shrink-0 ${
+                supabaseStatus === "connected"
+                  ? "bg-emerald-400"
+                  : supabaseStatus === "checking"
+                  ? "bg-amber-400 animate-pulse"
+                  : "bg-red-400/60"
+              }`}
+            />
+            {supabaseMessage}
           </div>
         </div>
 
-        {showAdminLogin && (
-          <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center px-4">
-            <div className="w-full max-w-md rounded-2xl border border-blackbox-border bg-blackbox-surface p-6">
-              <h2 className="text-xl font-bold">Admin Login</h2>
-              <p className="text-sm text-blackbox-subtext mt-1">
-                Enter admin credentials to access the control panel.
-              </p>
+        {/* Footer */}
+        <div className="relative z-10 flex items-center justify-between px-8 py-5 border-t border-blackbox-border/15">
+          <span className="text-xs text-blackbox-subtext/20">BlackBox © 2025</span>
+          <button
+            type="button"
+            onClick={() => { setShowAdminLogin(true); setAdminLoginError(""); }}
+            className="text-xs text-blackbox-subtext/20 hover:text-blackbox-subtext/50 transition-colors"
+          >
+            Access
+          </button>
+        </div>
 
-              <form onSubmit={submitAdminLogin} className="mt-4 space-y-3">
+        {/* Admin login modal */}
+        {showAdminLogin && (
+          <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center px-4">
+            <div className="w-full max-w-sm rounded-2xl border border-blackbox-border bg-blackbox-surface p-7 shadow-2xl">
+
+              <div className="flex items-center gap-3 mb-6">
+                <div className="w-9 h-9 rounded-xl bg-blackbox-primary/10 border border-blackbox-primary/20 flex items-center justify-center flex-shrink-0">
+                  <Lock size={15} className="text-blackbox-primary" />
+                </div>
+                <div>
+                  <h2 className="text-sm font-bold">Admin Access</h2>
+                  <p className="text-xs text-blackbox-subtext/50 mt-0.5">Control panel credentials</p>
+                </div>
+              </div>
+
+              <form onSubmit={submitAdminLogin} className="space-y-3">
                 <input
                   type="text"
                   value={adminUsername}
                   onChange={(e) => setAdminUsername(e.target.value)}
                   placeholder="Username"
-                  className="w-full px-3 py-2 rounded-lg bg-blackbox-bg border border-blackbox-border focus:outline-none focus:ring-2 focus:ring-blackbox-primary"
+                  autoFocus
+                  className="w-full px-3 py-2.5 rounded-xl bg-blackbox-bg border border-blackbox-border focus:outline-none focus:ring-2 focus:ring-blackbox-primary/40 text-sm"
                 />
                 <input
                   type="password"
                   value={adminPassword}
                   onChange={(e) => setAdminPassword(e.target.value)}
                   placeholder="Password"
-                  className="w-full px-3 py-2 rounded-lg bg-blackbox-bg border border-blackbox-border focus:outline-none focus:ring-2 focus:ring-blackbox-primary"
+                  className="w-full px-3 py-2.5 rounded-xl bg-blackbox-bg border border-blackbox-border focus:outline-none focus:ring-2 focus:ring-blackbox-primary/40 text-sm"
                 />
-                {adminLoginError && <p className="text-sm text-red-400">{adminLoginError}</p>}
 
-                <div className="flex justify-end gap-2 pt-2">
+                {adminLoginError && (
+                  <p className="text-xs text-red-400 flex items-center gap-1.5">
+                    <span className="w-1 h-1 rounded-full bg-red-400 flex-shrink-0" />
+                    {adminLoginError}
+                  </p>
+                )}
+
+                <div className="flex gap-2 pt-1">
                   <button
                     type="button"
-                    onClick={() => setShowAdminLogin(false)}
-                    className="px-4 py-2 rounded-lg border border-blackbox-border bg-blackbox-bg"
+                    onClick={() => { setShowAdminLogin(false); setAdminLoginError(""); }}
+                    className="flex-1 px-4 py-2.5 rounded-xl border border-blackbox-border bg-blackbox-bg text-sm hover:border-blackbox-primary/30 transition-colors"
                   >
                     Cancel
                   </button>
                   <button
                     type="submit"
-                    className="px-4 py-2 rounded-lg bg-blackbox-primary text-blackbox-county-green font-semibold"
+                    className="flex-1 px-4 py-2.5 rounded-xl bg-blackbox-primary text-blackbox-county-green font-semibold text-sm btn-shine"
                   >
-                    Login
+                    Sign In
                   </button>
                 </div>
               </form>

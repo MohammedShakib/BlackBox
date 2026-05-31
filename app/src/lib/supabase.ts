@@ -19,6 +19,7 @@ export const supabase = hasSupabaseEnv
 
 const WEB_MODE_SETTINGS_TABLE = "web_mode_settings";
 const WEB_MODE_SETTINGS_ID = "global";
+const CHANNEL_CACHE_TABLE = "channel_file_cache";
 
 export type WebModeSettingsPayload = {
   mode: "web_mode";
@@ -68,6 +69,61 @@ function coerceWebModePayload(payload: unknown): WebModeSettingsPayload | null {
     rememberAdminInputs: toBoolValue(raw.rememberAdminInputs, true),
     showAdminPanel: toBoolValue(raw.showAdminPanel, false),
   };
+}
+
+export type CachedFileEntry = {
+  id: number;
+  folder_id: number | null;
+  name: string;
+  size: number;
+  mime_type?: string | null;
+  created_at: string;
+};
+
+export type ChannelCacheData = {
+  files: CachedFileEntry[];
+  total: number;
+  synced_at: string;
+};
+
+export async function loadChannelCache(
+  channelId: string,
+): Promise<SupabaseActionResult<ChannelCacheData>> {
+  if (!supabase) return { data: null, error: "Supabase env missing." };
+
+  const { data, error } = await supabase
+    .from(CHANNEL_CACHE_TABLE)
+    .select("files, total, synced_at")
+    .eq("channel_id", channelId)
+    .maybeSingle();
+
+  if (error) return { data: null, error: error.message };
+  if (!data) return { data: null, error: null };
+
+  return {
+    data: {
+      files: (data.files as CachedFileEntry[]) || [],
+      total: data.total as number,
+      synced_at: data.synced_at as string,
+    },
+    error: null,
+  };
+}
+
+export async function saveChannelCache(
+  channelId: string,
+  files: CachedFileEntry[],
+  total: number,
+): Promise<SupabaseActionResult<"saved">> {
+  if (!supabase) return { data: null, error: "Supabase env missing." };
+
+  const { error } = await supabase.from(CHANNEL_CACHE_TABLE).upsert(
+    { channel_id: channelId, files, total },
+    { onConflict: "channel_id" },
+  );
+
+  if (error) return { data: null, error: error.message };
+  return { data: "saved", error: null };
 }
 
 export async function checkSupabaseHealth(): Promise<{ ok: boolean; message: string }> {
