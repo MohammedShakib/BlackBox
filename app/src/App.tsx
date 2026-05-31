@@ -1,4 +1,4 @@
-﻿import { useState, useEffect } from "react";
+import { FormEvent, useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { load } from "@tauri-apps/plugin-store";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
@@ -18,6 +18,7 @@ import { SettingsProvider } from "./context/SettingsContext";
 import { DropZoneProvider } from "./contexts/DropZoneContext";
 
 const queryClient = new QueryClient();
+const WEB_ADMIN_SESSION_KEY = "blackbox_web_admin_session";
 
 type AuthStatus = "loading" | "authenticated" | "unauthenticated";
 
@@ -58,7 +59,7 @@ function DesktopAppContent() {
         }
       } catch (err) {
         console.warn("Session restore failed, showing login:", err);
-        // Session file is corrupt or revoked — clean up and show login
+        // Session file is corrupt or revoked � clean up and show login
         try {
           const store = await load("config.json");
           await store.delete("api_id");
@@ -113,18 +114,145 @@ function DesktopAppContent() {
 
 function WebAppContent() {
   const { theme } = useTheme();
+  const [isAdminAuthenticated, setIsAdminAuthenticated] = useState(false);
+  const [showAdminLogin, setShowAdminLogin] = useState(false);
+  const [adminUsername, setAdminUsername] = useState("");
+  const [adminPassword, setAdminPassword] = useState("");
+  const [adminLoginError, setAdminLoginError] = useState("");
 
   useEffect(() => {
     document.body.classList.add("web-runtime");
+    if (typeof window !== "undefined") {
+      const savedSession = window.sessionStorage.getItem(WEB_ADMIN_SESSION_KEY);
+      setIsAdminAuthenticated(savedSession === "1");
+    }
+
     return () => {
       document.body.classList.remove("web-runtime");
     };
   }, []);
 
+  const submitAdminLogin = (event: FormEvent) => {
+    event.preventDefault();
+    setAdminLoginError("");
+
+    if (adminUsername.trim() === "admin" && adminPassword === "admin") {
+      setIsAdminAuthenticated(true);
+      setShowAdminLogin(false);
+      setAdminUsername("");
+      setAdminPassword("");
+      if (typeof window !== "undefined") {
+        window.sessionStorage.setItem(WEB_ADMIN_SESSION_KEY, "1");
+      }
+      return;
+    }
+
+    setAdminLoginError("Invalid admin credentials.");
+  };
+
+  const logoutAdmin = () => {
+    setIsAdminAuthenticated(false);
+    setShowAdminLogin(false);
+    setAdminUsername("");
+    setAdminPassword("");
+    setAdminLoginError("");
+    if (typeof window !== "undefined") {
+      window.sessionStorage.removeItem(WEB_ADMIN_SESSION_KEY);
+    }
+  };
+
+  if (isAdminAuthenticated) {
+    return (
+      <>
+        <Toaster theme={theme} position="bottom-center" />
+        <div className="fixed top-4 right-4 z-50">
+          <button
+            type="button"
+            onClick={logoutAdmin}
+            className="px-3 py-2 rounded-lg border border-blackbox-border bg-blackbox-bg/90 text-sm font-medium"
+          >
+            Admin Logout
+          </button>
+        </div>
+        <WebModeApp />
+      </>
+    );
+  }
+
   return (
     <>
       <Toaster theme={theme} position="bottom-center" />
-      <WebModeApp />
+      <main className="min-h-screen bg-blackbox-bg text-blackbox-text px-6 py-10 md:px-10 relative overflow-hidden">
+        <div className="absolute inset-0 pointer-events-none bg-[radial-gradient(circle_at_15%_20%,rgba(29,252,159,0.12),transparent_45%),radial-gradient(circle_at_85%_15%,rgba(64,165,127,0.2),transparent_40%)]" />
+
+        <div className="relative z-10 max-w-5xl mx-auto">
+          <div className="flex justify-end mb-8">
+            <button
+              type="button"
+              onClick={() => {
+                setShowAdminLogin(true);
+                setAdminLoginError("");
+              }}
+              className="px-4 py-2 rounded-lg border border-blackbox-border bg-blackbox-bg/90 text-sm font-semibold"
+            >
+              Admin Control
+            </button>
+          </div>
+
+          <section className="rounded-3xl border border-blackbox-border bg-blackbox-hover/70 p-8 md:p-12 shadow-2xl">
+            <p className="text-xs tracking-[0.28em] text-blackbox-subtext uppercase">Welcome</p>
+            <h1 className="mt-3 text-3xl md:text-5xl font-bold leading-tight">Maybe Landing Page</h1>
+            <p className="mt-4 text-base md:text-lg text-blackbox-subtext max-w-2xl">
+              This is the public entry page. Only admin users can open backend control and manage the full system panel.
+            </p>
+          </section>
+        </div>
+
+        {showAdminLogin && (
+          <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center px-4">
+            <div className="w-full max-w-md rounded-2xl border border-blackbox-border bg-blackbox-surface p-6">
+              <h2 className="text-xl font-bold">Admin Login</h2>
+              <p className="text-sm text-blackbox-subtext mt-1">
+                Enter admin credentials to access the control panel.
+              </p>
+
+              <form onSubmit={submitAdminLogin} className="mt-4 space-y-3">
+                <input
+                  type="text"
+                  value={adminUsername}
+                  onChange={(e) => setAdminUsername(e.target.value)}
+                  placeholder="Username"
+                  className="w-full px-3 py-2 rounded-lg bg-blackbox-bg border border-blackbox-border focus:outline-none focus:ring-2 focus:ring-blackbox-primary"
+                />
+                <input
+                  type="password"
+                  value={adminPassword}
+                  onChange={(e) => setAdminPassword(e.target.value)}
+                  placeholder="Password"
+                  className="w-full px-3 py-2 rounded-lg bg-blackbox-bg border border-blackbox-border focus:outline-none focus:ring-2 focus:ring-blackbox-primary"
+                />
+                {adminLoginError && <p className="text-sm text-red-400">{adminLoginError}</p>}
+
+                <div className="flex justify-end gap-2 pt-2">
+                  <button
+                    type="button"
+                    onClick={() => setShowAdminLogin(false)}
+                    className="px-4 py-2 rounded-lg border border-blackbox-border bg-blackbox-bg"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    className="px-4 py-2 rounded-lg bg-blackbox-primary text-blackbox-county-green font-semibold"
+                  >
+                    Login
+                  </button>
+                </div>
+              </form>
+            </div>
+          </div>
+        )}
+      </main>
     </>
   );
 }
