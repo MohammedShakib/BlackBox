@@ -8,6 +8,7 @@ import { ErrorBoundary } from "./components/ErrorBoundary";
 import { UpdateBanner } from "./components/UpdateBanner";
 import { WebModeApp } from "./components/WebModeApp";
 import { useUpdateCheck } from "./hooks/useUpdateCheck";
+import { checkSupabaseHealth, hasSupabaseEnv } from "./lib/supabase";
 import "./App.css";
 
 import { Toaster } from "sonner";
@@ -59,7 +60,7 @@ function DesktopAppContent() {
         }
       } catch (err) {
         console.warn("Session restore failed, showing login:", err);
-        // Session file is corrupt or revoked — clean up and show login
+        // Session file is corrupt or revoked - clean up and show login
         try {
           const store = await load("config.json");
           await store.delete("api_id");
@@ -119,12 +120,28 @@ function WebAppContent() {
   const [adminUsername, setAdminUsername] = useState("");
   const [adminPassword, setAdminPassword] = useState("");
   const [adminLoginError, setAdminLoginError] = useState("");
+  const [supabaseStatus, setSupabaseStatus] = useState<"checking" | "connected" | "error" | "missing">(
+    hasSupabaseEnv ? "checking" : "missing",
+  );
+  const [supabaseMessage, setSupabaseMessage] = useState(
+    hasSupabaseEnv ? "Checking Supabase connection..." : "Supabase env missing.",
+  );
 
   useEffect(() => {
     document.body.classList.add("web-runtime");
     if (typeof window !== "undefined") {
       const savedSession = window.sessionStorage.getItem(WEB_ADMIN_SESSION_KEY);
       setIsAdminAuthenticated(savedSession === "1");
+    }
+
+    const checkSupabase = async () => {
+      const result = await checkSupabaseHealth();
+      setSupabaseStatus(result.ok ? "connected" : "error");
+      setSupabaseMessage(result.message);
+    };
+
+    if (hasSupabaseEnv) {
+      checkSupabase();
     }
 
     return () => {
@@ -205,6 +222,18 @@ function WebAppContent() {
             <p className="mt-4 text-base md:text-lg text-blackbox-subtext max-w-2xl">
               This is the public entry page. Only admin users can open backend control and manage the full system panel.
             </p>
+            <div className="mt-6 inline-flex items-center gap-2 rounded-full border border-blackbox-border bg-blackbox-bg/70 px-3 py-1.5 text-sm">
+              <span
+                className={`h-2.5 w-2.5 rounded-full ${
+                  supabaseStatus === "connected"
+                    ? "bg-emerald-400"
+                    : supabaseStatus === "checking"
+                      ? "bg-amber-400"
+                      : "bg-red-400"
+                }`}
+              />
+              <span className="text-blackbox-subtext">{supabaseMessage}</span>
+            </div>
           </section>
         </div>
 
