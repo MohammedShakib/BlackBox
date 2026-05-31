@@ -172,6 +172,7 @@ export function WebModeApp() {
   const [downloadingId, setDownloadingId] = useState<number | null>(null);
   const [viewerFile, setViewerFile] = useState<ApiFile | null>(null);
   const [viewerError, setViewerError] = useState("");
+  const [viewerLoading, setViewerLoading] = useState(false);
 
   const [apiConfig, setApiConfig] = useState<ApiConfigResponse | null>(null);
   const [supabaseSyncInfo, setSupabaseSyncInfo] = useState("Syncing settings from Supabase...");
@@ -674,16 +675,81 @@ export function WebModeApp() {
 
   const openViewer = (file: ApiFile) => {
     setViewerError("");
+    setViewerLoading(true);
     setViewerFile(file);
   };
 
   const closeViewer = () => {
     setViewerFile(null);
     setViewerError("");
+    setViewerLoading(false);
   };
 
   const viewerKind = viewerFile ? detectViewerKind(viewerFile) : "none";
   const viewerUrl = viewerFile ? buildFileEndpoint(viewerFile, true) : "";
+
+  useEffect(() => {
+    const verifyViewer = async () => {
+      if (!viewerFile) return;
+
+      const kind = detectViewerKind(viewerFile);
+      if (kind === "none") {
+        setViewerLoading(false);
+        return;
+      }
+
+      try {
+        const params = new URLSearchParams();
+        if (!apiConfig?.locked_mode && parsedFolderId !== null) {
+          params.set("folder_id", String(parsedFolderId));
+        }
+        const probeUrl = `${normalizedBaseUrl}/api/v1/files/${viewerFile.id}/download${
+          params.toString() ? `?${params.toString()}` : ""
+        }`;
+
+        const res = await fetch(probeUrl, {
+          method: "HEAD",
+          headers: {
+            "X-API-Key": apiKeyInput.trim(),
+          },
+        });
+
+        if (!res.ok) {
+          if (res.status === 503) {
+            setViewerError("Backend is not ready or Telegram session is disconnected. Reconnect and check auth status.");
+          } else if (res.status === 401) {
+            setViewerError("API key is invalid or missing. Please reconnect.");
+          } else {
+            setViewerError(`Preview failed with status ${res.status}.`);
+          }
+          setViewerLoading(false);
+          return;
+        }
+
+        const contentType = (res.headers.get("content-type") || "").toLowerCase();
+        if (
+          (kind === "video" && !contentType.startsWith("video/")) ||
+          (kind === "audio" && !contentType.startsWith("audio/"))
+        ) {
+          setViewerError(
+            `Server returned Content-Type "${contentType || "unknown"}". Browser cannot treat this as ${kind}.`
+          );
+        }
+      } catch {
+        setViewerError("Failed to verify preview stream. Check backend URL/network.");
+      } finally {
+        setViewerLoading(false);
+      }
+    };
+
+    verifyViewer();
+  }, [
+    apiConfig?.locked_mode,
+    apiKeyInput,
+    normalizedBaseUrl,
+    parsedFolderId,
+    viewerFile,
+  ]);
 
   return (
     <main className="min-h-screen bg-blackbox-bg text-blackbox-text p-6 md:p-10">
@@ -1041,6 +1107,12 @@ export function WebModeApp() {
             </div>
 
             <div className="flex-1 overflow-auto p-4">
+              {viewerLoading && (
+                <div className="rounded-lg border border-blackbox-border bg-blackbox-bg p-4 text-sm text-blackbox-subtext">
+                  Preparing preview stream...
+                </div>
+              )}
+
               {viewerKind === "video" && (
                 <video
                   key={viewerUrl}
@@ -1048,7 +1120,11 @@ export function WebModeApp() {
                   controls
                   autoPlay
                   className="h-full max-h-[76vh] w-full rounded-lg bg-black object-contain"
-                  onError={() => setViewerError("Failed to play this video stream.")}
+                  onError={() =>
+                    setViewerError(
+                      "Browser could not play this video. This often happens with MKV/HEVC/unsupported audio codecs. Try MP4 (H.264/AAC) or use Windows app player."
+                    )
+                  }
                 />
               )}
 
@@ -1058,12 +1134,12 @@ export function WebModeApp() {
                     key={viewerUrl}
                     src={viewerUrl}
                     controls
-                    autoPlay
-                    className="w-full"
-                    onError={() => setViewerError("Failed to play this audio stream.")}
-                  />
-                </div>
-              )}
+                  autoPlay
+                  className="w-full"
+                  onError={() => setViewerError("Browser could not play this audio stream. Codec may be unsupported.")}
+                />
+              </div>
+            )}
 
               {viewerKind === "image" && (
                 <img
