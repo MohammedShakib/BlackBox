@@ -2,6 +2,18 @@ import { FormEvent, useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { load } from "@tauri-apps/plugin-store";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import {
+  Clapperboard,
+  Download,
+  Film,
+  Flame,
+  Ghost,
+  Home,
+  Orbit,
+  Search,
+  ShieldCheck,
+  Tv,
+} from "lucide-react";
 import { AuthWizard } from "./components/AuthWizard";
 import { Dashboard } from "./components/Dashboard";
 import { ErrorBoundary } from "./components/ErrorBoundary";
@@ -20,6 +32,25 @@ import { DropZoneProvider } from "./contexts/DropZoneContext";
 
 const queryClient = new QueryClient();
 const WEB_ADMIN_SESSION_KEY = "blackbox_web_admin_session";
+
+type LandingReleaseItem = {
+  id: number;
+  title: string;
+  meta: string;
+  age: string;
+  tag: string;
+};
+
+const landingReleases: LandingReleaseItem[] = [
+  { id: 1, title: "FROM (2026) Dual Audio [Hindi & English]", meta: "Prime Original Web Series", age: "1 hour ago", tag: "WEB-DL" },
+  { id: 2, title: "Kattalan (2026) Hindi Dubbed HDTC V2", meta: "720p | 1080p | HEVC", age: "2 days ago", tag: "HDTC" },
+  { id: 3, title: "Kara (2026) Dual Audio [Hindi & Tamil]", meta: "WEB-DL 480p | 720p", age: "4 days ago", tag: "WEB-DL" },
+  { id: 4, title: "Spider-Noir (2026) Hindi Dubbed", meta: "Amazon Prime Release", age: "4 days ago", tag: "WEB-DL" },
+  { id: 5, title: "Bonolota Express (2026) Bengali", meta: "720p | 1080p", age: "1 week ago", tag: "WEB-DL" },
+  { id: 6, title: "Bachelor Point (Season 5)", meta: "Bangla Original Web", age: "1 week ago", tag: "WEB-DL" },
+  { id: 7, title: "The Prince (2026) Dubbed", meta: "Dual Audio 1080p", age: "9 days ago", tag: "TRENDING" },
+  { id: 8, title: "Rakkhosh (2026) Bengali", meta: "Full HD 720p", age: "10 days ago", tag: "WEB-DL" },
+];
 
 type AuthStatus = "loading" | "authenticated" | "unauthenticated";
 
@@ -199,42 +230,133 @@ function WebAppContent() {
   return (
     <>
       <Toaster theme={theme} position="bottom-center" />
-      <main className="min-h-screen bg-blackbox-bg text-blackbox-text px-6 py-10 md:px-10 relative overflow-hidden">
-        <div className="absolute inset-0 pointer-events-none bg-[radial-gradient(circle_at_15%_20%,rgba(29,252,159,0.12),transparent_45%),radial-gradient(circle_at_85%_15%,rgba(64,165,127,0.2),transparent_40%)]" />
+      <main className="min-h-screen bg-[#090913] text-blackbox-text relative overflow-hidden pb-12">
+        <div className="absolute inset-0 pointer-events-none bg-[radial-gradient(circle_at_18%_8%,rgba(37,130,96,0.22),transparent_42%),radial-gradient(circle_at_84%_6%,rgba(29,252,159,0.12),transparent_30%)]" />
 
-        <div className="relative z-10 max-w-5xl mx-auto">
-          <div className="flex justify-end mb-8">
-            <button
-              type="button"
-              onClick={() => {
-                setShowAdminLogin(true);
-                setAdminLoginError("");
-              }}
-              className="px-4 py-2 rounded-lg border border-blackbox-border bg-blackbox-bg/90 text-sm font-semibold"
-            >
-              Admin Control
-            </button>
+        <div className="relative z-10">
+          <header className="border-b border-white/10 bg-black/60 backdrop-blur">
+            <div className="mx-auto w-full max-w-[1380px] px-4 py-5 md:px-8">
+              <div className="flex items-center justify-between gap-4">
+                <div className="flex items-center gap-2 md:gap-7">
+                  <div className="text-xl font-extrabold tracking-wide text-[#b8ff3e]">
+                    CINEFREAK<span className="text-white text-base">.top</span>
+                  </div>
+                  <nav className="hidden lg:flex items-center gap-6 text-[17px] font-semibold">
+                    <a href="#" className="inline-flex items-center gap-2 text-white hover:text-blackbox-primary">
+                      <Home size={16} />
+                      Home
+                    </a>
+                    <a href="#" className="inline-flex items-center gap-2 text-white hover:text-blackbox-primary">
+                      <Tv size={16} />
+                      WEB-Series
+                    </a>
+                    <a href="#" className="inline-flex items-center gap-2 text-white hover:text-blackbox-primary">
+                      <Film size={16} />
+                      Movies
+                    </a>
+                    <a href="#" className="inline-flex items-center gap-2 text-white hover:text-blackbox-primary">
+                      <Ghost size={16} />
+                      Horror
+                    </a>
+                    <a href="#" className="inline-flex items-center gap-2 text-white hover:text-blackbox-primary">
+                      <Orbit size={16} />
+                      MCU
+                    </a>
+                  </nav>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowAdminLogin(true);
+                    setAdminLoginError("");
+                  }}
+                  className="rounded-full border border-white/20 bg-white/5 px-4 py-2 text-sm font-semibold hover:border-blackbox-primary/40"
+                >
+                  Admin Control
+                </button>
+              </div>
+            </div>
+          </header>
+
+          <div className="mx-auto w-full max-w-[1380px] px-4 pt-5 md:px-8">
+            <div className="flex items-center justify-between gap-4 border-b border-white/10 pb-5">
+              <div className="flex flex-wrap items-center gap-3">
+                <span className="inline-flex items-center gap-2 rounded-full border border-red-400/35 bg-red-500/15 px-4 py-2 text-sm font-semibold text-red-200">
+                  <ShieldCheck size={15} />
+                  18+ Movies
+                </span>
+                <span className="inline-flex items-center rounded-full border border-blue-400/35 bg-blue-500/15 px-4 py-2 text-sm font-semibold text-blue-100">
+                  Join Telegram
+                </span>
+                <span className="inline-flex items-center gap-2 rounded-full border border-yellow-300/30 bg-yellow-500/15 px-4 py-2 text-sm font-semibold text-yellow-100">
+                  <Download size={15} />
+                  How to Download
+                </span>
+              </div>
+              <div className="hidden md:inline-flex items-center gap-2 rounded-full border border-white/20 bg-white/5 px-3 py-2 text-sm text-blackbox-subtext">
+                <Search size={16} />
+                Search
+              </div>
+            </div>
+
+            <section className="pt-10">
+              <div className="mb-8 flex items-center justify-between gap-4">
+                <h1 className="inline-flex items-center gap-3 text-3xl font-bold">
+                  <Flame size={24} />
+                  Latest Releases
+                </h1>
+                <div className="text-xs text-blackbox-subtext">
+                  {supabaseStatus === "connected"
+                    ? `Backend: Connected - ${supabaseMessage}`
+                    : `Backend: ${supabaseMessage}`}
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-6">
+                {landingReleases.map((item, index) => (
+                  <article
+                    key={item.id}
+                    className="overflow-hidden rounded-xl border border-[#3b2f0f] bg-[#0f0f18] shadow-[0_0_0_1px_rgba(255,184,0,0.08)]"
+                  >
+                    <div className="relative aspect-[3/4] border-b border-white/10">
+                      <div className="absolute inset-0 bg-gradient-to-br from-[#2b5b47] via-[#1e2635] to-[#3d251e]" />
+                      <div className="absolute inset-0 opacity-35 bg-[radial-gradient(circle_at_30%_20%,rgba(255,255,255,0.35),transparent_45%),linear-gradient(145deg,transparent,rgba(0,0,0,0.55))]" />
+                      <span className="absolute left-2 top-2 inline-flex items-center rounded-sm bg-black/60 px-2 py-0.5 text-[10px] font-extrabold tracking-[0.18em] text-white">
+                        TRENDING
+                      </span>
+                      <span className="absolute right-2 top-2 rounded bg-black/65 px-1.5 py-0.5 text-[10px] font-semibold text-white">
+                        {item.tag}
+                      </span>
+                      <div className="absolute bottom-3 left-3 right-3 text-sm font-bold text-white">
+                        #{index + 1} SAMPLE
+                      </div>
+                    </div>
+                    <div className="space-y-2 p-3">
+                      <h2 className="max-h-[60px] overflow-hidden text-[15px] font-extrabold leading-5">{item.title}</h2>
+                      <p className="max-h-8 overflow-hidden text-xs text-blackbox-subtext">{item.meta}</p>
+                      <p className="text-xs text-white/70">{item.age}</p>
+                    </div>
+                  </article>
+                ))}
+              </div>
+            </section>
           </div>
 
-          <section className="rounded-3xl border border-blackbox-border bg-blackbox-hover/70 p-8 md:p-12 shadow-2xl">
-            <p className="text-xs tracking-[0.28em] text-blackbox-subtext uppercase">Welcome</p>
-            <h1 className="mt-3 text-3xl md:text-5xl font-bold leading-tight">Maybe Landing Page</h1>
-            <p className="mt-4 text-base md:text-lg text-blackbox-subtext max-w-2xl">
-              This is the public entry page. Only admin users can open backend control and manage the full system panel.
-            </p>
-            <div className="mt-6 inline-flex items-center gap-2 rounded-full border border-blackbox-border bg-blackbox-bg/70 px-3 py-1.5 text-sm">
-              <span
-                className={`h-2.5 w-2.5 rounded-full ${
-                  supabaseStatus === "connected"
-                    ? "bg-emerald-400"
-                    : supabaseStatus === "checking"
-                      ? "bg-amber-400"
-                      : "bg-red-400"
-                }`}
-              />
-              <span className="text-blackbox-subtext">{supabaseMessage}</span>
+          <div className="mx-auto w-full max-w-[1380px] px-4 pt-10 md:px-8">
+            <div className="flex justify-end">
+              <button
+                type="button"
+                onClick={() => {
+                  setShowAdminLogin(true);
+                  setAdminLoginError("");
+                }}
+                className="inline-flex items-center gap-2 rounded-lg border border-blackbox-border bg-blackbox-bg/60 px-4 py-2 text-sm font-semibold"
+              >
+                <Clapperboard size={15} />
+                Open Admin Login
+              </button>
             </div>
-          </section>
+          </div>
         </div>
 
         {showAdminLogin && (

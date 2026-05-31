@@ -8,14 +8,17 @@ use grammers_session::storages::SqliteSession;
 use grammers_tl_types as tl;
 use rand::Rng;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::env;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::sync::{Mutex, RwLock};
 use tokio::time::{sleep, Duration};
 
 const TELEGRAM_CHUNK_SIZE: i32 = 512 * 1024;
+const FILE_INDEX_CACHE_TTL_SECS: i64 = 30;
+const FILE_INDEX_REFRESH_MAX_SCAN: usize = 8_000;
 
 #[derive(Clone)]
 struct AppState {
@@ -28,6 +31,9 @@ struct AppState {
     api_key: String,
     locked_folder_id: Option<i64>,
     admin_key: Option<String>,
+    file_index_cache: Arc<RwLock<HashMap<String, FileIndexCacheEntry>>>,
+    file_index_refreshing: Arc<Mutex<HashSet<String>>>,
+    file_index_cache_path: String,
 }
 
 #[derive(Serialize)]
@@ -100,7 +106,7 @@ struct FilesResponse {
     total: usize,
 }
 
-#[derive(Serialize)]
+#[derive(Clone, Serialize, Deserialize)]
 struct ApiFile {
     id: i64,
     folder_id: Option<i64>,
@@ -110,9 +116,22 @@ struct ApiFile {
     created_at: String,
 }
 
+#[derive(Clone, Serialize, Deserialize)]
+struct FileIndexCacheEntry {
+    files: Vec<ApiFile>,
+    newest_message_id: i64,
+    refreshed_at_unix: i64,
+}
+
 #[derive(Deserialize)]
 struct FolderQuery {
     folder_id: Option<i64>,
+}
+
+#[derive(Deserialize)]
+struct DownloadQuery {
+    folder_id: Option<i64>,
+    inline: Option<bool>,
 }
 
 fn json_error(code: &str, message: &str, status: u16) -> HttpResponse {
@@ -123,6 +142,190 @@ fn json_error(code: &str, message: &str, status: u16) -> HttpResponse {
         },
     };
     HttpResponse::build(actix_web::http::StatusCode::from_u16(status).unwrap()).json(body)
+}
+
+fn now_unix() -> i64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0)
+}
+
+fn cache_key_for_folder(folder_id: Option<i64>) -> String {
+    folder_id
+        .map(|id| id.to_string())
+        .unwrap_or_else(|| "home".to_string())
+}
+
+fn is_cache_stale(entry: &FileIndexCacheEntry) -> bool {
+    now_unix() - entry.refreshed_at_unix > FILE_INDEX_CACHE_TTL_SECS
+}
+
+fn query_param_value(req: &HttpRequest, target: &str) -> Option<String> {
+    req.query_string()
+        .split('&')
+        .filter(|part| !part.is_empty())
+        .find_map(|pair| {
+            let mut iter = pair.splitn(2, '=');
+            let key = iter.next()?;
+            let value = iter.next().unwrap_or_default();
+            if key == target {
+                Some(value.to_string())
+            } else {
+                None
+            }
+        })
+}
+
+fn load_file_index_snapshot(path: &str) -> HashMap<String, FileIndexCacheEntry> {
+    let content = match std::fs::read_to_string(path) {
+        Ok(v) => v,
+        Err(_) => return HashMap::new(),
+    };
+
+    serde_json::from_str::<HashMap<String, FileIndexCacheEntry>>(&content).unwrap_or_default()
+}
+
+async fn save_file_index_snapshot(state: &AppState) {
+    let cache = state.file_index_cache.read().await.clone();
+    if let Ok(payload) = serde_json::to_string(&cache) {
+        if let Err(e) = std::fs::write(&state.file_index_cache_path, payload) {
+            log::warn!("Failed to persist file index cache: {}", e);
+        }
+    }
+}
+
+fn api_file_from_msg(msg: &grammers_client::types::Message, folder_id: Option<i64>) -> Option<ApiFile> {
+    let media = msg.media()?;
+    let (name, size, mime) = match media {
+        Media::Document(d) => (
+            d.name().to_string(),
+            d.size() as u64,
+            d.mime_type().map(|s| s.to_string()),
+        ),
+        Media::Photo(_) => ("Photo.jpg".to_string(), 0, Some("image/jpeg".to_string())),
+        _ => ("Unknown".to_string(), 0, None),
+    };
+
+    Some(ApiFile {
+        id: msg.id() as i64,
+        folder_id,
+        name,
+        size,
+        mime_type: mime,
+        created_at: msg.date().to_string(),
+    })
+}
+
+async fn build_full_file_index(
+    client: &Client,
+    peer: &Peer,
+    folder_id: Option<i64>,
+) -> Result<FileIndexCacheEntry, String> {
+    let mut files: Vec<ApiFile> = Vec::new();
+    let mut newest_message_id: i64 = 0;
+    let mut msgs = client.iter_messages(peer);
+
+    while let Some(msg) = msgs.next().await.map_err(|e| e.to_string())? {
+        if newest_message_id == 0 {
+            newest_message_id = msg.id() as i64;
+        }
+        if let Some(file) = api_file_from_msg(&msg, folder_id) {
+            files.push(file);
+        }
+    }
+
+    Ok(FileIndexCacheEntry {
+        files,
+        newest_message_id,
+        refreshed_at_unix: now_unix(),
+    })
+}
+
+async fn refresh_file_index_incremental(
+    client: &Client,
+    peer: &Peer,
+    folder_id: Option<i64>,
+    previous: &FileIndexCacheEntry,
+) -> Result<FileIndexCacheEntry, String> {
+    if previous.newest_message_id == 0 {
+        return build_full_file_index(client, peer, folder_id).await;
+    }
+
+    let mut new_files: Vec<ApiFile> = Vec::new();
+    let mut newest_message_id = previous.newest_message_id;
+    let mut found_existing_head = false;
+    let mut scanned = 0usize;
+    let mut msgs = client.iter_messages(peer);
+
+    while let Some(msg) = msgs.next().await.map_err(|e| e.to_string())? {
+        scanned += 1;
+        let msg_id = msg.id() as i64;
+        if scanned == 1 {
+            newest_message_id = msg_id;
+        }
+
+        if msg_id == previous.newest_message_id {
+            found_existing_head = true;
+            break;
+        }
+
+        if let Some(file) = api_file_from_msg(&msg, folder_id) {
+            new_files.push(file);
+        }
+
+        if scanned >= FILE_INDEX_REFRESH_MAX_SCAN {
+            break;
+        }
+    }
+
+    if !found_existing_head && scanned >= FILE_INDEX_REFRESH_MAX_SCAN {
+        return build_full_file_index(client, peer, folder_id).await;
+    }
+
+    let mut merged: Vec<ApiFile> = Vec::with_capacity(new_files.len() + previous.files.len());
+    merged.extend(new_files);
+    merged.extend(previous.files.clone());
+
+    let mut seen: HashSet<i64> = HashSet::new();
+    merged.retain(|file| seen.insert(file.id));
+
+    Ok(FileIndexCacheEntry {
+        files: merged,
+        newest_message_id,
+        refreshed_at_unix: now_unix(),
+    })
+}
+
+fn filter_and_paginate_files(files: &[ApiFile], query: &FilesQuery) -> FilesResponse {
+    let page = query.page.unwrap_or(1).max(1);
+    let limit = query.limit.unwrap_or(50).clamp(1, 200);
+
+    let filtered: Vec<ApiFile> = if let Some(search) = query.search.as_ref().map(|s| s.trim()).filter(|s| !s.is_empty()) {
+        let needle = search.to_lowercase();
+        files
+            .iter()
+            .filter(|f| f.name.to_lowercase().contains(&needle))
+            .cloned()
+            .collect()
+    } else {
+        files.to_vec()
+    };
+
+    let total = filtered.len();
+    let start = ((page - 1) * limit) as usize;
+    let paginated = filtered
+        .into_iter()
+        .skip(start)
+        .take(limit as usize)
+        .collect::<Vec<_>>();
+
+    FilesResponse {
+        files: paginated,
+        page,
+        limit,
+        total,
+    }
 }
 
 fn map_error(e: impl std::fmt::Display) -> String {
@@ -142,8 +345,14 @@ fn map_error(e: impl std::fmt::Display) -> String {
 }
 
 fn check_auth(req: &HttpRequest, state: &web::Data<AppState>) -> Result<(), HttpResponse> {
-    let provided = req.headers().get("X-API-Key").and_then(|v| v.to_str().ok());
-    match provided {
+    let provided = req
+        .headers()
+        .get("X-API-Key")
+        .and_then(|v| v.to_str().ok())
+        .map(|v| v.to_string())
+        .or_else(|| query_param_value(req, "api_key"));
+
+    match provided.as_deref() {
         Some(key) if key == state.api_key => Ok(()),
         Some(_) => Err(json_error("UNAUTHORIZED", "Invalid API key", 401)),
         None => Err(json_error("UNAUTHORIZED", "Missing X-API-Key header", 401)),
@@ -278,6 +487,8 @@ async fn reset_telegram_state(state: &AppState, drop_session_files: bool) {
     *state.password_token.lock().await = None;
     *state.client.lock().await = None;
     state.peer_cache.write().await.clear();
+    state.file_index_cache.write().await.clear();
+    save_file_index_snapshot(state).await;
 
     if drop_session_files {
         let _ = std::fs::remove_file(&state.session_path);
@@ -587,46 +798,73 @@ async fn api_list_files(
         Err(e) => return json_error("PEER_ERROR", &e, 400),
     };
 
-    let mut all_files: Vec<ApiFile> = Vec::new();
-    let mut msgs = client.iter_messages(&peer);
+    let cache_key = cache_key_for_folder(folder_id);
+    let cached_entry = {
+        let cache = state.file_index_cache.read().await;
+        cache.get(&cache_key).cloned()
+    };
 
-    while let Some(msg) = msgs.next().await.ok().flatten() {
-        if let Some(doc) = msg.media() {
-            let (name, size, mime) = match doc {
-                Media::Document(d) => (d.name().to_string(), d.size(), d.mime_type().map(|s| s.to_string())),
-                Media::Photo(_) => ("Photo.jpg".to_string(), 0, Some("image/jpeg".to_string())),
-                _ => ("Unknown".to_string(), 0, None),
-            };
+    if let Some(entry) = cached_entry {
+        if is_cache_stale(&entry) {
+            let state_for_refresh = state.clone();
+            let refresh_key = cache_key.clone();
+            let refresh_client = client.clone();
+            let refresh_peer = peer.clone();
 
-            if let Some(ref search) = query.search {
-                if !name.to_lowercase().contains(&search.to_lowercase()) {
-                    continue;
+            tokio::spawn(async move {
+                {
+                    let mut refreshing = state_for_refresh.file_index_refreshing.lock().await;
+                    if !refreshing.insert(refresh_key.clone()) {
+                        return;
+                    }
                 }
-            }
 
-            all_files.push(ApiFile {
-                id: msg.id() as i64,
-                folder_id,
-                name,
-                size: size as u64,
-                mime_type: mime,
-                created_at: msg.date().to_string(),
+                let previous = {
+                    let cache = state_for_refresh.file_index_cache.read().await;
+                    cache.get(&refresh_key).cloned()
+                };
+
+                if let Some(prev) = previous {
+                    match refresh_file_index_incremental(&refresh_client, &refresh_peer, folder_id, &prev).await {
+                        Ok(updated) => {
+                            state_for_refresh
+                                .file_index_cache
+                                .write()
+                                .await
+                                .insert(refresh_key.clone(), updated);
+                            save_file_index_snapshot(&state_for_refresh).await;
+                        }
+                        Err(e) => {
+                            log::warn!("File index refresh failed for {}: {}", refresh_key, e);
+                        }
+                    }
+                }
+
+                state_for_refresh
+                    .file_index_refreshing
+                    .lock()
+                    .await
+                    .remove(&refresh_key);
             });
         }
+
+        let response = filter_and_paginate_files(&entry.files, &query);
+        return HttpResponse::Ok().json(response);
     }
 
-    let total = all_files.len();
-    let page = query.page.unwrap_or(1).max(1);
-    let limit = query.limit.unwrap_or(50).clamp(1, 200);
-    let start = ((page - 1) * limit) as usize;
-    let paginated: Vec<ApiFile> = all_files.into_iter().skip(start).take(limit as usize).collect();
-
-    HttpResponse::Ok().json(FilesResponse {
-        files: paginated,
-        page,
-        limit,
-        total,
-    })
+    match build_full_file_index(&client, &peer, folder_id).await {
+        Ok(entry) => {
+            let response = filter_and_paginate_files(&entry.files, &query);
+            state
+                .file_index_cache
+                .write()
+                .await
+                .insert(cache_key, entry);
+            save_file_index_snapshot(&state).await;
+            HttpResponse::Ok().json(response)
+        }
+        Err(e) => json_error("FETCH_ERROR", &format!("Failed to list files: {}", e), 500),
+    }
 }
 
 #[get("/api/v1/files/{message_id}")]
@@ -682,7 +920,7 @@ async fn api_get_file(
 async fn api_download_file_head(
     req: HttpRequest,
     path: web::Path<i64>,
-    query: web::Query<FolderQuery>,
+    query: web::Query<DownloadQuery>,
     state: web::Data<AppState>,
 ) -> impl Responder {
     if let Err(e) = check_auth(&req, &state) {
@@ -731,7 +969,7 @@ async fn api_download_file_head(
 async fn api_download_file(
     req: HttpRequest,
     path: web::Path<i64>,
-    query: web::Query<FolderQuery>,
+    query: web::Query<DownloadQuery>,
     state: web::Data<AppState>,
 ) -> impl Responder {
     if let Err(e) = check_auth(&req, &state) {
@@ -845,20 +1083,26 @@ async fn api_download_file(
                         }
                     };
 
+                    let content_disposition = if query.inline.unwrap_or(false) {
+                        format!("inline; filename=\"{}\"", filename)
+                    } else {
+                        format!("attachment; filename=\"{}\"", filename)
+                    };
+
                     if is_partial {
                         return HttpResponse::PartialContent()
                             .insert_header(("Content-Type", mime))
                             .insert_header(("Content-Length", content_length.to_string()))
                             .insert_header(("Content-Range", format!("bytes {}-{}/{}", start_byte, end_byte, size)))
                             .insert_header(("Accept-Ranges", "bytes"))
-                            .insert_header(("Content-Disposition", format!("attachment; filename=\"{}\"", filename)))
+                            .insert_header(("Content-Disposition", content_disposition))
                             .streaming(stream);
                     }
 
                     return HttpResponse::Ok()
                         .insert_header(("Content-Type", mime))
                         .insert_header(("Content-Length", size.to_string()))
-                        .insert_header(("Content-Disposition", format!("attachment; filename=\"{}\"", filename)))
+                        .insert_header(("Content-Disposition", content_disposition))
                         .insert_header(("Accept-Ranges", "bytes"))
                         .streaming(stream);
                 }
@@ -887,6 +1131,11 @@ async fn main() -> std::io::Result<()> {
         }
         path.join("telegram.session").to_string_lossy().to_string()
     };
+    let file_index_cache_path = PathBuf::from(&session_dir)
+        .join("file_index_cache.json")
+        .to_string_lossy()
+        .to_string();
+    let persisted_file_index_cache = load_file_index_snapshot(&file_index_cache_path);
 
     let api_key = env::var("API_KEY").unwrap_or_else(|_| {
         let bytes: Vec<u8> = (0..16).map(|_| rand::thread_rng().gen::<u8>()).collect();
@@ -909,6 +1158,9 @@ async fn main() -> std::io::Result<()> {
         api_key,
         locked_folder_id,
         admin_key,
+        file_index_cache: Arc::new(RwLock::new(persisted_file_index_cache)),
+        file_index_refreshing: Arc::new(Mutex::new(HashSet::new())),
+        file_index_cache_path,
     };
 
     log::info!("Starting BlackBox backend on http://{}:{}", host, port);

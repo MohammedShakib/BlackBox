@@ -1,5 +1,5 @@
 import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
-import { Eye, EyeOff, Shield, Lock, Link2, Search, Download } from "lucide-react";
+import { Eye, EyeOff, Shield, Lock, Link2, Search, Download, X } from "lucide-react";
 import { formatBytes } from "../utils";
 import {
   loadWebModeSettingsFromSupabase,
@@ -45,6 +45,8 @@ type AuthStatusResponse = {
   authorized: boolean;
 };
 
+type ViewerKind = "video" | "audio" | "image" | "pdf" | "none";
+
 const BASE_URL_KEY = "blackbox_web_api_base_url";
 const API_KEY_KEY = "blackbox_web_api_key";
 const ADMIN_REMEMBER_KEY = "blackbox_web_admin_remember";
@@ -83,6 +85,17 @@ async function parseApiError(res: Response): Promise<string> {
     // ignore json parse errors
   }
   return `Request failed (${res.status})`;
+}
+
+function detectViewerKind(file: ApiFile): ViewerKind {
+  const mime = (file.mime_type || "").toLowerCase();
+  const lower = file.name.toLowerCase();
+
+  if (mime.startsWith("video/") || /\.(mp4|mkv|webm|mov|m4v|avi)$/i.test(lower)) return "video";
+  if (mime.startsWith("audio/") || /\.(mp3|wav|m4a|ogg|flac|aac)$/i.test(lower)) return "audio";
+  if (mime.startsWith("image/") || /\.(png|jpe?g|gif|webp|bmp|avif)$/i.test(lower)) return "image";
+  if (mime === "application/pdf" || /\.pdf$/i.test(lower)) return "pdf";
+  return "none";
 }
 
 function PasswordInput({
@@ -157,6 +170,8 @@ export function WebModeApp() {
   const [loadingFiles, setLoadingFiles] = useState(false);
   const [filesError, setFilesError] = useState("");
   const [downloadingId, setDownloadingId] = useState<number | null>(null);
+  const [viewerFile, setViewerFile] = useState<ApiFile | null>(null);
+  const [viewerError, setViewerError] = useState("");
 
   const [apiConfig, setApiConfig] = useState<ApiConfigResponse | null>(null);
   const [supabaseSyncInfo, setSupabaseSyncInfo] = useState("Syncing settings from Supabase...");
@@ -552,7 +567,19 @@ export function WebModeApp() {
     setFiles([]);
     setTotal(0);
     setFilesError("");
+    setViewerFile(null);
+    setViewerError("");
     setConnectionInfo("Disconnected.");
+  };
+
+  const buildFileEndpoint = (file: ApiFile, inline: boolean): string => {
+    const params = new URLSearchParams();
+    if (!apiConfig?.locked_mode && parsedFolderId !== null) {
+      params.set("folder_id", String(parsedFolderId));
+    }
+    params.set("api_key", apiKeyInput.trim());
+    if (inline) params.set("inline", "true");
+    return `${normalizedBaseUrl}/api/v1/files/${file.id}/download?${params.toString()}`;
   };
 
   useEffect(() => {
@@ -644,6 +671,19 @@ export function WebModeApp() {
       setDownloadingId(null);
     }
   };
+
+  const openViewer = (file: ApiFile) => {
+    setViewerError("");
+    setViewerFile(file);
+  };
+
+  const closeViewer = () => {
+    setViewerFile(null);
+    setViewerError("");
+  };
+
+  const viewerKind = viewerFile ? detectViewerKind(viewerFile) : "none";
+  const viewerUrl = viewerFile ? buildFileEndpoint(viewerFile, true) : "";
 
   return (
     <main className="min-h-screen bg-blackbox-bg text-blackbox-text p-6 md:p-10">
@@ -908,10 +948,10 @@ export function WebModeApp() {
                 </tr>
               </thead>
               <tbody>
-                {loadingFiles ? (
-                  <tr>
-                    <td className="p-3" colSpan={4}>Loading files...</td>
-                  </tr>
+              {loadingFiles ? (
+                <tr>
+                  <td className="p-3" colSpan={4}>Loading files...</td>
+                </tr>
                 ) : files.length === 0 ? (
                   <tr>
                     <td className="p-3 text-blackbox-subtext" colSpan={4}>No files found.</td>
@@ -923,14 +963,23 @@ export function WebModeApp() {
                       <td className="p-3">{formatBytes(file.size)}</td>
                       <td className="p-3">{file.created_at}</td>
                       <td className="p-3">
-                        <button
-                          onClick={() => downloadFile(file)}
-                          disabled={downloadingId === file.id}
-                          className="px-3 py-1 rounded-md bg-blackbox-primary text-blackbox-county-green disabled:opacity-60 inline-flex items-center gap-2"
-                        >
-                          <Download size={14} />
-                          {downloadingId === file.id ? "Downloading..." : "Download"}
-                        </button>
+                        <div className="flex items-center gap-2">
+                          <button
+                            onClick={() => openViewer(file)}
+                            className="px-3 py-1 rounded-md border border-blackbox-border bg-blackbox-bg hover:bg-blackbox-primary/15 inline-flex items-center gap-2"
+                          >
+                            <Eye size={14} />
+                            View
+                          </button>
+                          <button
+                            onClick={() => downloadFile(file)}
+                            disabled={downloadingId === file.id}
+                            className="px-3 py-1 rounded-md bg-blackbox-primary text-blackbox-county-green disabled:opacity-60 inline-flex items-center gap-2"
+                          >
+                            <Download size={14} />
+                            {downloadingId === file.id ? "Downloading..." : "Download"}
+                          </button>
+                        </div>
                       </td>
                     </tr>
                   ))
@@ -960,6 +1009,92 @@ export function WebModeApp() {
           </div>
         </section>
       </div>
+
+      {viewerFile && (
+        <div className="fixed inset-0 z-50 bg-black/80 p-4 md:p-8">
+          <div className="mx-auto flex h-full w-full max-w-6xl flex-col rounded-2xl border border-blackbox-border bg-blackbox-surface">
+            <div className="flex items-center justify-between gap-3 border-b border-blackbox-border px-4 py-3">
+              <div className="min-w-0">
+                <p className="truncate text-sm font-semibold">{viewerFile.name}</p>
+                <p className="text-xs text-blackbox-subtext">
+                  {formatBytes(viewerFile.size)} | {viewerFile.created_at}
+                </p>
+              </div>
+              <div className="flex items-center gap-2">
+                <a
+                  href={viewerUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="rounded-lg border border-blackbox-border bg-blackbox-bg px-3 py-1.5 text-sm"
+                >
+                  Open New Tab
+                </a>
+                <button
+                  type="button"
+                  onClick={closeViewer}
+                  className="rounded-lg border border-blackbox-border bg-blackbox-bg p-2"
+                  aria-label="Close viewer"
+                >
+                  <X size={16} />
+                </button>
+              </div>
+            </div>
+
+            <div className="flex-1 overflow-auto p-4">
+              {viewerKind === "video" && (
+                <video
+                  key={viewerUrl}
+                  src={viewerUrl}
+                  controls
+                  autoPlay
+                  className="h-full max-h-[76vh] w-full rounded-lg bg-black object-contain"
+                  onError={() => setViewerError("Failed to play this video stream.")}
+                />
+              )}
+
+              {viewerKind === "audio" && (
+                <div className="rounded-lg border border-blackbox-border bg-blackbox-bg p-6">
+                  <audio
+                    key={viewerUrl}
+                    src={viewerUrl}
+                    controls
+                    autoPlay
+                    className="w-full"
+                    onError={() => setViewerError("Failed to play this audio stream.")}
+                  />
+                </div>
+              )}
+
+              {viewerKind === "image" && (
+                <img
+                  key={viewerUrl}
+                  src={viewerUrl}
+                  alt={viewerFile.name}
+                  className="mx-auto max-h-[76vh] w-auto rounded-lg border border-blackbox-border object-contain"
+                  onError={() => setViewerError("Failed to load this image.")}
+                />
+              )}
+
+              {viewerKind === "pdf" && (
+                <iframe
+                  key={viewerUrl}
+                  src={viewerUrl}
+                  title={viewerFile.name}
+                  className="h-[76vh] w-full rounded-lg border border-blackbox-border bg-white"
+                />
+              )}
+
+              {viewerKind === "none" && (
+                <div className="rounded-lg border border-blackbox-border bg-blackbox-bg p-6 text-sm text-blackbox-subtext">
+                  Inline preview is not available for this file type. Use Download or Open New Tab.
+                </div>
+              )}
+
+              {viewerError && <p className="mt-3 text-sm text-red-400">{viewerError}</p>}
+            </div>
+          </div>
+        </div>
+      )}
     </main>
   );
 }
