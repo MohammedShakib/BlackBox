@@ -25,6 +25,8 @@ struct AppState {
     peer_cache: Arc<RwLock<HashMap<i64, Peer>>>,
     session_path: String,
     api_key: String,
+    locked_folder_id: Option<i64>,
+    admin_key: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -44,6 +46,13 @@ struct AuthResult {
 struct AuthStatusResponse {
     connected: bool,
     authorized: bool,
+}
+
+#[derive(Serialize)]
+struct ApiConfigResponse {
+    locked_mode: bool,
+    locked_folder_id: Option<i64>,
+    auth_management_requires_admin_key: bool,
 }
 
 #[derive(Deserialize)]
@@ -138,6 +147,23 @@ fn check_auth(req: &HttpRequest, state: &web::Data<AppState>) -> Result<(), Http
         Some(_) => Err(json_error("UNAUTHORIZED", "Invalid API key", 401)),
         None => Err(json_error("UNAUTHORIZED", "Missing X-API-Key header", 401)),
     }
+}
+
+fn check_admin(req: &HttpRequest, state: &web::Data<AppState>) -> Result<(), HttpResponse> {
+    if let Some(admin_key) = &state.admin_key {
+        let provided = req.headers().get("X-Admin-Key").and_then(|v| v.to_str().ok());
+        match provided {
+            Some(key) if key == admin_key => Ok(()),
+            Some(_) => Err(json_error("FORBIDDEN", "Invalid admin key", 403)),
+            None => Err(json_error("FORBIDDEN", "Missing X-Admin-Key header", 403)),
+        }
+    } else {
+        Ok(())
+    }
+}
+
+fn effective_folder_id(state: &web::Data<AppState>, requested: Option<i64>) -> Option<i64> {
+    state.locked_folder_id.or(requested)
 }
 
 async fn resolve_peer(
@@ -245,6 +271,15 @@ async fn api_health() -> impl Responder {
     })
 }
 
+#[get("/api/v1/config")]
+async fn api_config(state: web::Data<AppState>) -> impl Responder {
+    HttpResponse::Ok().json(ApiConfigResponse {
+        locked_mode: state.locked_folder_id.is_some(),
+        locked_folder_id: state.locked_folder_id,
+        auth_management_requires_admin_key: state.admin_key.is_some(),
+    })
+}
+
 #[get("/api/v1/auth/status")]
 async fn api_auth_status(state: web::Data<AppState>) -> impl Responder {
     let client_opt = { state.client.lock().await.clone() };
@@ -264,9 +299,14 @@ async fn api_auth_status(state: web::Data<AppState>) -> impl Responder {
 
 #[post("/api/v1/auth/request_code")]
 async fn api_auth_request_code(
+    req: HttpRequest,
     body: web::Json<RequestCodeBody>,
     state: web::Data<AppState>,
 ) -> impl Responder {
+    if let Err(e) = check_admin(&req, &state) {
+        return e;
+    }
+
     if body.api_hash.trim().is_empty() {
         return HttpResponse::BadRequest().json(AuthResult {
             success: false,
@@ -304,7 +344,15 @@ async fn api_auth_request_code(
 }
 
 #[post("/api/v1/auth/sign_in")]
-async fn api_auth_sign_in(body: web::Json<SignInBody>, state: web::Data<AppState>) -> impl Responder {
+async fn api_auth_sign_in(
+    req: HttpRequest,
+    body: web::Json<SignInBody>,
+    state: web::Data<AppState>,
+) -> impl Responder {
+    if let Err(e) = check_admin(&req, &state) {
+        return e;
+    }
+
     let client_opt = { state.client.lock().await.clone() };
     let client = match client_opt {
         Some(c) => c,
@@ -374,9 +422,14 @@ async fn api_auth_sign_in(body: web::Json<SignInBody>, state: web::Data<AppState
 
 #[post("/api/v1/auth/check_password")]
 async fn api_auth_check_password(
+    req: HttpRequest,
     body: web::Json<PasswordBody>,
     state: web::Data<AppState>,
 ) -> impl Responder {
+    if let Err(e) = check_admin(&req, &state) {
+        return e;
+    }
+
     let client_opt = { state.client.lock().await.clone() };
     let client = match client_opt {
         Some(c) => c,
@@ -436,7 +489,8 @@ async fn api_list_files(
         None => return json_error("NOT_CONNECTED", "Telegram client is not connected", 503),
     };
 
-    let peer = match resolve_peer(&client, query.folder_id, &state.peer_cache).await {
+    let folder_id = effective_folder_id(&state, query.folder_id);
+    let peer = match resolve_peer(&client, folder_id, &state.peer_cache).await {
         Ok(p) => p,
         Err(e) => return json_error("PEER_ERROR", &e, 400),
     };
@@ -460,7 +514,7 @@ async fn api_list_files(
 
             all_files.push(ApiFile {
                 id: msg.id() as i64,
-                folder_id: query.folder_id,
+                folder_id,
                 name,
                 size: size as u64,
                 mime_type: mime,
@@ -501,7 +555,8 @@ async fn api_get_file(
         None => return json_error("NOT_CONNECTED", "Telegram client is not connected", 503),
     };
 
-    let peer = match resolve_peer(&client, query.folder_id, &state.peer_cache).await {
+    let folder_id = effective_folder_id(&state, query.folder_id);
+    let peer = match resolve_peer(&client, folder_id, &state.peer_cache).await {
         Ok(p) => p,
         Err(e) => return json_error("PEER_ERROR", &e, 400),
     };
@@ -517,7 +572,7 @@ async fn api_get_file(
                     };
                     return HttpResponse::Ok().json(ApiFile {
                         id: msg.id() as i64,
-                        folder_id: query.folder_id,
+                        folder_id,
                         name,
                         size: size as u64,
                         mime_type: mime,
@@ -549,7 +604,8 @@ async fn api_download_file_head(
         None => return json_error("NOT_CONNECTED", "Telegram client is not connected", 503),
     };
 
-    let peer = match resolve_peer(&client, query.folder_id, &state.peer_cache).await {
+    let folder_id = effective_folder_id(&state, query.folder_id);
+    let peer = match resolve_peer(&client, folder_id, &state.peer_cache).await {
         Ok(p) => p,
         Err(e) => return json_error("PEER_ERROR", &e, 400),
     };
@@ -597,7 +653,8 @@ async fn api_download_file(
         None => return json_error("NOT_CONNECTED", "Telegram client is not connected", 503),
     };
 
-    let peer = match resolve_peer(&client, query.folder_id, &state.peer_cache).await {
+    let folder_id = effective_folder_id(&state, query.folder_id);
+    let peer = match resolve_peer(&client, folder_id, &state.peer_cache).await {
         Ok(p) => p,
         Err(e) => return json_error("PEER_ERROR", &e, 400),
     };
@@ -745,6 +802,10 @@ async fn main() -> std::io::Result<()> {
         log::warn!("API_KEY not set. Generated temporary key for this boot: {}", generated);
         generated
     });
+    let locked_folder_id = env::var("LOCKED_FOLDER_ID")
+        .ok()
+        .and_then(|v| v.parse::<i64>().ok());
+    let admin_key = env::var("ADMIN_KEY").ok().filter(|v| !v.trim().is_empty());
 
     let state = AppState {
         client: Arc::new(Mutex::new(None)),
@@ -754,6 +815,8 @@ async fn main() -> std::io::Result<()> {
         peer_cache: Arc::new(RwLock::new(HashMap::new())),
         session_path,
         api_key,
+        locked_folder_id,
+        admin_key,
     };
 
     log::info!("Starting BlackBox backend on http://{}:{}", host, port);
@@ -770,6 +833,7 @@ async fn main() -> std::io::Result<()> {
             .wrap(cors)
             .app_data(web::Data::new(state.clone()))
             .service(api_health)
+            .service(api_config)
             .service(api_auth_status)
             .service(api_auth_request_code)
             .service(api_auth_sign_in)

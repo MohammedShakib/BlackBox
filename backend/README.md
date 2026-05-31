@@ -11,11 +11,14 @@ This is a server-only Rust backend for web mode. It does not depend on Tauri or 
 - `HOST` (default: `0.0.0.0`)
 - `PORT` (default: `8550`)
 - `SESSION_DIR` (default: `./data`)
+- `LOCKED_FOLDER_ID` (optional): if set, users can only browse/download this single Telegram folder/channel.
+- `ADMIN_KEY` (optional): if set, auth-management endpoints require `X-Admin-Key`.
 
 ## Endpoints
 
 Public (no API key):
 - `GET /api/v1/health`
+- `GET /api/v1/config`
 - `GET /api/v1/auth/status`
 - `POST /api/v1/auth/request_code`
 - `POST /api/v1/auth/sign_in`
