@@ -144,6 +144,8 @@ export function WebModeApp() {
   const [authLoading, setAuthLoading] = useState(false);
   const [authInfo, setAuthInfo] = useState("");
   const [authError, setAuthError] = useState("");
+  const [authStatus, setAuthStatus] = useState<AuthStatusResponse | null>(null);
+  const [authStatusLoading, setAuthStatusLoading] = useState(false);
 
   const [search, setSearch] = useState("");
   const [folderIdInput, setFolderIdInput] = useState("");
@@ -162,6 +164,7 @@ export function WebModeApp() {
   const [remoteHydrated, setRemoteHydrated] = useState(false);
   const hasLoadedRemoteRef = useRef(false);
   const saveDebounceRef = useRef<number | null>(null);
+  const hasAutoConnectAttemptedRef = useRef(false);
 
   const totalPages = useMemo(() => Math.max(1, Math.ceil(total / limit)), [total, limit]);
   const normalizedBaseUrl = useMemo(() => normalizeBaseUrl(baseUrlInput), [baseUrlInput]);
@@ -392,8 +395,10 @@ export function WebModeApp() {
       });
       if (data.next_step === "password") {
         setAuthInfo("Password required. Enter your Telegram 2FA password.");
+        setAuthStatus({ connected: true, authorized: false });
       } else {
         setAuthInfo("Login successful.");
+        await refreshAuthStatus({ silent: true });
       }
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : "Failed to sign in.";
@@ -423,6 +428,7 @@ export function WebModeApp() {
         password: passwordInput,
       });
       setAuthInfo("Password accepted. Login successful.");
+      await refreshAuthStatus({ silent: true });
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : "Failed to verify password.";
       setAuthError(message);
@@ -431,33 +437,53 @@ export function WebModeApp() {
     }
   };
 
-  const checkAuthStatus = async () => {
-    setAuthError("");
-    setAuthInfo("");
+  const refreshAuthStatus = async (opts?: { silent?: boolean }): Promise<AuthStatusResponse | null> => {
+    const silent = opts?.silent === true;
+    if (!normalizedBaseUrl) return null;
+
+    if (!silent) {
+      setAuthError("");
+      setAuthInfo("");
+    }
+
+    setAuthStatusLoading(true);
     try {
       const headers: Record<string, string> = {};
       if (adminKeyInput.trim()) headers["X-Admin-Key"] = adminKeyInput.trim();
       const res = await fetch(`${normalizedBaseUrl}/api/v1/auth/status`, { headers });
       if (!res.ok) throw new Error(await parseApiError(res));
       const data: AuthStatusResponse = await res.json();
-      setAuthInfo(`Auth status: connected=${data.connected}, authorized=${data.authorized}`);
+      setAuthStatus(data);
+      if (!silent) {
+        setAuthInfo(`Auth status: connected=${data.connected}, authorized=${data.authorized}`);
+      }
+      return data;
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : "Failed to check auth status.";
-      setAuthError(message);
+      setAuthStatus(null);
+      if (!silent) {
+        setAuthError(message);
+      }
+      return null;
+    } finally {
+      setAuthStatusLoading(false);
     }
   };
 
-  const connect = async (e: FormEvent) => {
-    e.preventDefault();
-    setConnectionError("");
-    setConnectionInfo("");
+  const connectToBackend = async (opts?: { silent?: boolean }) => {
+    const silent = opts?.silent === true;
+
+    if (!silent) {
+      setConnectionError("");
+      setConnectionInfo("");
+    }
 
     if (!normalizedBaseUrl) {
-      setConnectionError("API base URL is required.");
+      if (!silent) setConnectionError("API base URL is required.");
       return;
     }
     if (!apiKeyInput.trim()) {
-      setConnectionError("API key is required.");
+      if (!silent) setConnectionError("API key is required.");
       return;
     }
 
@@ -493,26 +519,50 @@ export function WebModeApp() {
       setConnected(true);
       setPage(1);
 
+      const status = await refreshAuthStatus({ silent: true });
+      const authLabel = status?.authorized
+        ? "Telegram session is already authorized."
+        : "Telegram auth action may be required.";
       const lockLabel = cfg.locked_mode
         ? `Locked channel mode enabled (folder: ${cfg.locked_folder_id ?? "hidden"}).`
         : "Unlocked channel mode.";
-      setConnectionInfo(`Connected. Server ${health.status} v${health.version}. ${lockLabel}`);
+      setConnectionInfo(`Connected. Server ${health.status} v${health.version}. ${lockLabel} ${authLabel}`);
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : "Failed to connect to API server.";
       setConnected(false);
+      setAuthStatus(null);
       setConnectionError(message);
     } finally {
       setConnecting(false);
     }
   };
 
+  const checkAuthStatus = async () => {
+    await refreshAuthStatus();
+  };
+
+  const connect = async (e: FormEvent) => {
+    e.preventDefault();
+    await connectToBackend();
+  };
+
   const disconnect = () => {
     setConnected(false);
+    setAuthStatus(null);
     setFiles([]);
     setTotal(0);
     setFilesError("");
     setConnectionInfo("Disconnected.");
   };
+
+  useEffect(() => {
+    if (!remoteHydrated) return;
+    if (hasAutoConnectAttemptedRef.current) return;
+    if (!normalizedBaseUrl || !apiKeyInput.trim()) return;
+
+    hasAutoConnectAttemptedRef.current = true;
+    connectToBackend({ silent: true });
+  }, [apiKeyInput, normalizedBaseUrl, remoteHydrated]);
 
   useEffect(() => {
     const loadFiles = async () => {
@@ -671,6 +721,15 @@ export function WebModeApp() {
               <p className="text-sm text-blackbox-subtext">
                 Telegram login and backend auth changes are restricted. Share only API key with friends.
               </p>
+              {authStatusLoading ? (
+                <p className="text-xs text-blackbox-subtext mt-1">Checking Telegram session status...</p>
+              ) : authStatus ? (
+                <p className={`text-xs mt-1 ${authStatus.authorized ? "text-emerald-300" : "text-amber-300"}`}>
+                  {authStatus.authorized
+                    ? "Telegram session active. Verification not required right now."
+                    : "Telegram session is not authorized yet."}
+                </p>
+              ) : null}
             </div>
             <button
               type="button"
@@ -748,7 +807,7 @@ export function WebModeApp() {
                 <button
                   type="button"
                   onClick={requestCode}
-                  disabled={authLoading}
+                  disabled={authLoading || authStatus?.authorized}
                   className="px-3 py-2 rounded-lg bg-blackbox-primary text-blackbox-county-green font-semibold disabled:opacity-60"
                 >
                   Request Code
@@ -756,7 +815,7 @@ export function WebModeApp() {
                 <button
                   type="button"
                   onClick={signInWithCode}
-                  disabled={authLoading}
+                  disabled={authLoading || authStatus?.authorized}
                   className="px-3 py-2 rounded-lg border border-blackbox-border bg-blackbox-bg disabled:opacity-60"
                 >
                   Sign In
@@ -764,7 +823,7 @@ export function WebModeApp() {
                 <button
                   type="button"
                   onClick={submitPassword}
-                  disabled={authLoading}
+                  disabled={authLoading || authStatus?.authorized}
                   className="px-3 py-2 rounded-lg border border-blackbox-border bg-blackbox-bg disabled:opacity-60"
                 >
                   Submit Password
@@ -772,7 +831,7 @@ export function WebModeApp() {
                 <button
                   type="button"
                   onClick={checkAuthStatus}
-                  disabled={authLoading}
+                  disabled={authLoading || authStatusLoading}
                   className="px-3 py-2 rounded-lg border border-blackbox-border bg-blackbox-bg disabled:opacity-60"
                 >
                   Check Status
