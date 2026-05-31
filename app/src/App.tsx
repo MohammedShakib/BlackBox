@@ -113,6 +113,14 @@ function DesktopAppContent() {
 
 function WebAppContent() {
   const { theme } = useTheme();
+
+  useEffect(() => {
+    document.body.classList.add("web-runtime");
+    return () => {
+      document.body.classList.remove("web-runtime");
+    };
+  }, []);
+
   return (
     <>
       <Toaster theme={theme} position="bottom-center" />

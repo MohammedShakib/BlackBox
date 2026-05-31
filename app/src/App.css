@@ -49,6 +49,20 @@ body,
   transition: background-color 0.3s ease, color 0.3s ease;
 }
 
+/* Browser web mode needs page scroll. Desktop runtime keeps fixed viewport layout. */
+body.web-runtime {
+  height: auto;
+  min-height: 100vh;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+body.web-runtime #root {
+  height: auto;
+  min-height: 100vh;
+  overflow: visible;
+}
+
 /* Auth screen gradient background — premium multi-layered green palette */
 .auth-gradient {
   background:
