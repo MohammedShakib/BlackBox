@@ -167,6 +167,30 @@ fn effective_folder_id(state: &web::Data<AppState>, requested: Option<i64>) -> O
     state.locked_folder_id.or(requested)
 }
 
+fn channel_full_id_from_raw(raw_id: i64) -> i64 {
+    -1_000_000_000_000i64 - raw_id
+}
+
+fn raw_channel_id_from_full(full_id: i64) -> Option<i64> {
+    if full_id <= -1_000_000_000_000i64 {
+        Some((-full_id) - 1_000_000_000_000i64)
+    } else {
+        None
+    }
+}
+
+fn peer_id_matches(requested_id: i64, actual_id: i64, is_channel: bool) -> bool {
+    if requested_id == actual_id {
+        return true;
+    }
+
+    if is_channel {
+        return requested_id == channel_full_id_from_raw(actual_id);
+    }
+
+    false
+}
+
 async fn resolve_peer(
     client: &Client,
     folder_id: Option<i64>,
@@ -178,22 +202,34 @@ async fn resolve_peer(
             if let Some(peer) = cache.get(&fid) {
                 return Ok(peer.clone());
             }
+            if let Some(raw_id) = raw_channel_id_from_full(fid) {
+                if let Some(peer) = cache.get(&raw_id) {
+                    return Ok(peer.clone());
+                }
+            }
         }
 
         let mut found: Option<Peer> = None;
         let mut dialogs = client.iter_dialogs();
         let mut cache = peer_cache.write().await;
         while let Some(dialog) = dialogs.next().await.map_err(|e| e.to_string())? {
-            let peer_id = match &dialog.peer {
-                Peer::Channel(c) => Some(c.raw.id),
-                Peer::User(u) => Some(u.raw.id()),
-                _ => None,
-            };
-            if let Some(id) = peer_id {
-                cache.insert(id, dialog.peer.clone());
-                if id == fid {
-                    found = Some(dialog.peer.clone());
+            match &dialog.peer {
+                Peer::Channel(c) => {
+                    let raw_id = c.raw.id;
+                    cache.insert(raw_id, dialog.peer.clone());
+                    cache.insert(channel_full_id_from_raw(raw_id), dialog.peer.clone());
+                    if peer_id_matches(fid, raw_id, true) {
+                        found = Some(dialog.peer.clone());
+                    }
                 }
+                Peer::User(u) => {
+                    let user_id = u.raw.id();
+                    cache.insert(user_id, dialog.peer.clone());
+                    if peer_id_matches(fid, user_id, false) {
+                        found = Some(dialog.peer.clone());
+                    }
+                }
+                _ => {}
             }
         }
 
