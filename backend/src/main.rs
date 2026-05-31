@@ -13,6 +13,7 @@ use std::env;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::{Mutex, RwLock};
+use tokio::time::{sleep, Duration};
 
 const TELEGRAM_CHUNK_SIZE: i32 = 512 * 1024;
 
@@ -236,6 +237,19 @@ async fn ensure_client_initialized(state: &AppState, api_id: i32) -> Result<Clie
     Ok(client)
 }
 
+async fn reset_telegram_state(state: &AppState, drop_session_files: bool) {
+    *state.login_token.lock().await = None;
+    *state.password_token.lock().await = None;
+    *state.client.lock().await = None;
+    state.peer_cache.write().await.clear();
+
+    if drop_session_files {
+        let _ = std::fs::remove_file(&state.session_path);
+        let _ = std::fs::remove_file(format!("{}-wal", state.session_path));
+        let _ = std::fs::remove_file(format!("{}-shm", state.session_path));
+    }
+}
+
 fn parse_range_header(range: &str, total_size: u64) -> Option<(u64, u64)> {
     let range = range.trim().strip_prefix("bytes=")?;
     let parts: Vec<&str> = range.split('-').collect();
@@ -315,7 +329,7 @@ async fn api_auth_request_code(
         });
     }
 
-    let client = match ensure_client_initialized(&state, body.api_id).await {
+    let mut client = match ensure_client_initialized(&state, body.api_id).await {
         Ok(c) => c,
         Err(e) => {
             return HttpResponse::InternalServerError().json(AuthResult {
@@ -326,21 +340,63 @@ async fn api_auth_request_code(
         }
     };
 
-    match client.request_login_code(&body.phone, &body.api_hash).await {
-        Ok(token) => {
-            *state.login_token.lock().await = Some(token);
-            HttpResponse::Ok().json(AuthResult {
-                success: true,
-                next_step: Some("code".to_string()),
-                error: None,
-            })
+    let mut last_error: Option<String> = None;
+    for attempt in 1..=5 {
+        match client.request_login_code(&body.phone, &body.api_hash).await {
+            Ok(token) => {
+                *state.login_token.lock().await = Some(token);
+                return HttpResponse::Ok().json(AuthResult {
+                    success: true,
+                    next_step: Some("code".to_string()),
+                    error: None,
+                });
+            }
+            Err(e) => {
+                let raw = e.to_string();
+                let mapped = map_error(&raw);
+
+                // Telegram may return AUTH_RESTART (500) transiently.
+                // Official guidance is to repeat the method call.
+                if raw.contains("AUTH_RESTART") && attempt < 5 {
+                    log::warn!(
+                        "auth.request_code got AUTH_RESTART on attempt {}/5, retrying",
+                        attempt
+                    );
+                    reset_telegram_state(&state, true).await;
+                    let backoff_ms = 350 * attempt as u64;
+                    sleep(Duration::from_millis(backoff_ms)).await;
+                    client = match ensure_client_initialized(&state, body.api_id).await {
+                        Ok(c) => c,
+                        Err(init_err) => {
+                            return HttpResponse::InternalServerError().json(AuthResult {
+                                success: false,
+                                next_step: None,
+                                error: Some(format!("Client re-init failed: {}", init_err)),
+                            });
+                        }
+                    };
+                    continue;
+                }
+
+                if raw.contains("AUTH_RESTART") {
+                    last_error = Some(
+                        "Telegram temporarily restarted auth. Please wait 5-10 seconds and press Request Code again."
+                            .to_string(),
+                    );
+                    break;
+                }
+
+                last_error = Some(mapped);
+                break;
+            }
         }
-        Err(e) => HttpResponse::BadRequest().json(AuthResult {
-            success: false,
-            next_step: None,
-            error: Some(map_error(e)),
-        }),
     }
+
+    HttpResponse::BadRequest().json(AuthResult {
+        success: false,
+        next_step: None,
+        error: Some(last_error.unwrap_or_else(|| "Failed to request code".to_string())),
+    })
 }
 
 #[post("/api/v1/auth/sign_in")]

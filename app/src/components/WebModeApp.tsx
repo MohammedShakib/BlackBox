@@ -42,6 +42,11 @@ type AuthStatusResponse = {
 
 const BASE_URL_KEY = "blackbox_web_api_base_url";
 const API_KEY_KEY = "blackbox_web_api_key";
+const FALLBACK_CONFIG: ApiConfigResponse = {
+  locked_mode: false,
+  locked_folder_id: null,
+  auth_management_requires_admin_key: false,
+};
 
 function normalizeBaseUrl(url: string): string {
   return url.trim().replace(/\/+$/, "");
@@ -159,8 +164,16 @@ export function WebModeApp() {
 
   const fetchConfig = async (): Promise<ApiConfigResponse> => {
     const res = await fetch(`${normalizedBaseUrl}/api/v1/config`);
+    if (res.status === 404) {
+      // Backward-compatible with older backend versions without /api/v1/config
+      return FALLBACK_CONFIG;
+    }
     if (!res.ok) throw new Error(await parseApiError(res));
-    return res.json();
+    try {
+      return (await res.json()) as ApiConfigResponse;
+    } catch {
+      return FALLBACK_CONFIG;
+    }
   };
 
   const postAuth = async (path: string, payload: Record<string, unknown>) => {
