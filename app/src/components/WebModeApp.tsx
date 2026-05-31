@@ -47,7 +47,7 @@ function extractFileName(contentDisposition: string | null, fallback: string): s
 }
 
 export function WebModeApp() {
-  const [baseUrlInput, setBaseUrlInput] = useState("http://localhost:8787");
+  const [baseUrlInput, setBaseUrlInput] = useState("http://127.0.0.1:8550");
   const [apiKeyInput, setApiKeyInput] = useState("");
   const [connected, setConnected] = useState(false);
   const [connecting, setConnecting] = useState(false);
