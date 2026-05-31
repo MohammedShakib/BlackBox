@@ -59,13 +59,13 @@ jobs:
             const version = `${{ steps.get_version.outputs.VERSION }}`;
             const isBeta = version.includes('beta') || version.includes('alpha');
             const changelog = `${{ steps.git-cliff.outputs.content }}` || 'See commit history for changes in this release.';
-            const intro = `NoBuf v${version} — ${isBeta ? 'Pre-release for testing and feedback.' : 'Stable release of NoBuf.'}\n\n${isBeta ? '**Note:** This is a beta release. Some features may be incomplete or unstable. Please report any issues.' : ''}`;
+            const intro = `BlackBox v${version} — ${isBeta ? 'Pre-release for testing and feedback.' : 'Stable release of BlackBox.'}\n\n${isBeta ? '**Note:** This is a beta release. Some features may be incomplete or unstable. Please report any issues.' : ''}`;
             const body = `${intro}\n\n---\n\n## What Changed\n\n${changelog}\n\nSee the assets below to download and install.`;
             const { data } = await github.rest.repos.createRelease({
               owner: context.repo.owner,
               repo: context.repo.repo,
               tag_name: `v${version}`,
-              name: `NoBuf v${version}`,
+              name: `BlackBox v${version}`,
               body: body,
               draft: true,
               prerelease: isBeta
@@ -219,7 +219,7 @@ jobs:
           # ── Write new AppRun ──
           cat > squashfs-root/AppRun << 'APPRUN_EOF'
           #!/usr/bin/env bash
-          # ── NoBuf — cross-distro AppRun wrapper ──
+          # ── BlackBox — cross-distro AppRun wrapper ──
           # Fixes EGL_BAD_ALLOC on Arch/Fedora/rolling-release distros by ensuring
           # the host's GPU driver stack is used instead of bundled Ubuntu Mesa libs.
           set -u

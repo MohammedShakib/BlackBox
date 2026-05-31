@@ -3,7 +3,7 @@
   "plugins": {
     "updater": {
       "endpoints": [
-        "https://github.com/YOUR_GITHUB_USERNAME/blackbox/releases/latest/download/latest.json"
+        "https://github.com/MohammedShakib/BlackBox/releases/latest/download/latest.json"
       ],
       "pubkey": "REPLACE_WITH_YOUR_SIGNING_PUBLIC_KEY"
     }
